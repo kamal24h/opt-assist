@@ -1,29 +1,80 @@
 # services/conversation_service.py
+import logging
 import uuid
 from datetime import datetime
 from typing import Optional, List, Tuple
-from sqlalchemy.orm import Session
+
 from sqlalchemy import desc
+from sqlalchemy.orm import Session
+
+from config import settings
 from database import Conversation, Message
+from redis_client import ConversationCache, get_redis_client
+
+logger = logging.getLogger(__name__)
+
+
+def _safe_redis_client():
+    """
+    دریافت کلاینت Redis با مدیریت خطا.
+    اگر Redis در دسترس نباشد، None برمی‌گرداند تا سیستم روی Postgres ادامه دهد.
+    """
+    try:
+        return get_redis_client()
+    except Exception as exc:
+        logger.warning("Redis client unavailable: %s", exc)
+        return None
+
 
 class ConversationService:
+
+    # ---------- Conversation CRUD ----------
+
     @staticmethod
-    def create_conversation(db: Session, app_id: str, tenant_id: str, user_id: str, title: Optional[str] = None) -> Conversation:
+    def create_conversation(
+        db: Session,
+        app_id: str,
+        tenant_id: str,
+        user_id: str,
+        title: Optional[str] = None,
+    ) -> Conversation:
         conv = Conversation(
             id=uuid.uuid4(),
             app_id=app_id,
             tenant_id=tenant_id,
             user_id=user_id,
             title=title or "گفتگوی جدید",
-            status="active"
+            status="active",
         )
         db.add(conv)
         db.commit()
         db.refresh(conv)
+
+        # dual-write meta به Redis (best-effort)
+        redis_client = _safe_redis_client()
+        if redis_client is not None:
+            try:
+                ConversationCache.create_conversation(
+                    redis_client,
+                    str(conv.id),
+                    app_id=conv.app_id,
+                    tenant_id=conv.tenant_id,
+                    user_id=conv.user_id,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to cache conversation meta %s: %s", conv.id, exc
+                )
+
         return conv
 
     @staticmethod
-    def get_conversation(db: Session, conv_id: uuid.UUID, tenant_id: Optional[str] = None, user_id: Optional[str] = None) -> Optional[Conversation]:
+    def get_conversation(
+        db: Session,
+        conv_id: uuid.UUID,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> Optional[Conversation]:
         query = db.query(Conversation).filter(Conversation.id == conv_id)
         if tenant_id:
             query = query.filter(Conversation.tenant_id == tenant_id)
@@ -33,24 +84,34 @@ class ConversationService:
 
     @staticmethod
     def list_conversations(
-        db: Session, 
-        tenant_id: str, 
-        user_id: str, 
+        db: Session,
+        tenant_id: str,
+        user_id: str,
         app_id: Optional[str] = None,
-        limit: int = 20, 
-        offset: int = 0
+        limit: int = 20,
+        offset: int = 0,
     ) -> List[Conversation]:
         query = db.query(Conversation).filter(
             Conversation.tenant_id == tenant_id,
-            Conversation.user_id == user_id
+            Conversation.user_id == user_id,
         )
         if app_id:
             query = query.filter(Conversation.app_id == app_id)
-        
-        return query.order_by(desc(Conversation.updated_at)).offset(offset).limit(limit).all()
+
+        return (
+            query.order_by(desc(Conversation.updated_at))
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
 
     @staticmethod
-    def update_conversation(db: Session, conv: Conversation, title: Optional[str] = None, status: Optional[str] = None) -> Conversation:
+    def update_conversation(
+        db: Session,
+        conv: Conversation,
+        title: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> Conversation:
         if title is not None:
             conv.title = title
         if status is not None:
@@ -62,24 +123,37 @@ class ConversationService:
         db.refresh(conv)
         return conv
 
+    # ---------- Messages ----------
+
     @staticmethod
     def add_message(
-        db: Session, 
-        conversation_id: uuid.UUID, 
-        role: str, 
-        content: str, 
-        meta_info: Optional[dict] = None
+        db: Session,
+        conversation_id: uuid.UUID,
+        role: str,
+        content: str,
+        meta_info: Optional[dict] = None,
+        redis_client=None,
     ) -> Message:
+        """
+        ثبت پیام در PostgreSQL (منبع حقیقت) و سپس dual-write به Redis.
+
+        در صورت عدم دسترسی به Redis، خطا پرتاب نمی‌شود و سیستم روی Postgres
+        به کار خود ادامه می‌دهد.
+        """
         msg = Message(
             id=uuid.uuid4(),
             conversation_id=conversation_id,
             role=role,
             content=content,
-            meta_info=meta_info
+            meta_info=meta_info,
         )
         db.add(msg)
-        
-        conv = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+
+        conv = (
+            db.query(Conversation)
+            .filter(Conversation.id == conversation_id)
+            .first()
+        )
         if conv:
             conv.updated_at = datetime.utcnow()
             if role == "user" and (conv.title == "گفتگوی جدید" or not conv.title):
@@ -87,10 +161,35 @@ class ConversationService:
 
         db.commit()
         db.refresh(msg)
+
+        # dual-write به Redis (best-effort)
+        if redis_client is None:
+            redis_client = _safe_redis_client()
+
+        if redis_client is not None:
+            try:
+                ConversationCache.append_message(
+                    redis_client,
+                    str(conversation_id),
+                    role=role,
+                    content=content,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to append message to Redis for %s: %s",
+                    conversation_id,
+                    exc,
+                )
+
         return msg
 
     @staticmethod
-    def get_messages(db: Session, conversation_id: uuid.UUID, limit: int = 50, offset: int = 0) -> List[Message]:
+    def get_messages(
+        db: Session,
+        conversation_id: uuid.UUID,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[Message]:
         return (
             db.query(Message)
             .filter(Message.conversation_id == conversation_id)
@@ -101,7 +200,37 @@ class ConversationService:
         )
 
     @staticmethod
-    def get_recent_chat_history(db: Session, conversation_id: uuid.UUID, max_messages: int = 6) -> List[Tuple[str, str]]:
+    def get_recent_chat_history(
+        db: Session,
+        conversation_id: uuid.UUID,
+        max_messages: int = settings.chat_history_max_messages,
+        redis_client=None,
+    ) -> List[Tuple[str, str]]:
+        """
+        دریافت آخرین `max_messages` پیام مکالمه به ترتیب زمانی (قدیم -> جدید).
+
+        استراتژی:
+          ۱. تلاش برای خواندن از Redis
+          ۲. در صورت خالی/خطا، خواندن از PostgreSQL
+          ۳. در صورت موفقیت از Postgres، repopulate کردن Redis (best-effort)
+        """
+        if redis_client is None:
+            redis_client = _safe_redis_client()
+
+        # ۱. تلاش از Redis
+        if redis_client is not None:
+            try:
+                cached = ConversationCache.get_recent_messages(
+                    redis_client, str(conversation_id), max_messages
+                )
+                if cached:
+                    return [(m["role"], m["content"]) for m in cached]
+            except Exception as exc:
+                logger.warning(
+                    "Redis history read failed for %s: %s", conversation_id, exc
+                )
+
+        # ۲. Fallback به Postgres
         recent = (
             db.query(Message)
             .filter(Message.conversation_id == conversation_id)
@@ -109,4 +238,21 @@ class ConversationService:
             .limit(max_messages)
             .all()
         )
-        return [(m.role, m.content) for m in reversed(recent)]
+        messages: List[Tuple[str, str]] = [
+            (m.role, m.content) for m in reversed(recent)
+        ]
+
+        # ۳. Repopulate Redis از Postgres (best-effort)
+        if redis_client is not None and messages:
+            try:
+                ConversationCache.set_messages(
+                    redis_client,
+                    str(conversation_id),
+                    [{"role": r, "content": c} for r, c in messages],
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Redis repopulate failed for %s: %s", conversation_id, exc
+                )
+
+        return messages

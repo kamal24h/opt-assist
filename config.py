@@ -4,6 +4,7 @@ from typing import Optional
 from pydantic import computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 class Settings(BaseSettings):
     # تنظیمات پایگاه داده رابطه‌ای (PostgreSQL)
     postgres_user: str = "assistant_user"
@@ -32,6 +33,11 @@ class Settings(BaseSettings):
     redis_host: str = "redis"
     redis_port: int = 6379
     redis_password: Optional[str] = None
+    redis_ttl_seconds: int = 86400  # ۱ روز
+
+    # تنظیمات تاریخچه مکالمه
+    # حداکثر تعداد پیام‌هایی که به LLM داده می‌شود (۵ نوبت user+assistant = ۱۰ پیام)
+    chat_history_max_messages: int = 10
 
     # تولید URL دیتابیس بدون نیاز به ترکیب دستی رشته‌ها
     @computed_field
