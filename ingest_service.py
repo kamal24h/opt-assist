@@ -25,10 +25,27 @@ def get_embeddings() -> OllamaEmbeddings:
     )
 
 
+# جداکننده‌ها به ترتیب اولویت: ابتدا پاراگراف، بعد خط، بعد پایان جمله،
+# سپس علائم نیم‌جمله و در نهایت فاصله و کاراکتر. علائم فارسی (؟ ؛ ،) هم پوشش داده شده‌اند.
+PERSIAN_AWARE_SEPARATORS = [
+    "\n\n",
+    "\n",
+    ". ",
+    "؟ ",
+    "? ",
+    "! ",
+    "؛ ",
+    "، ",
+    " ",
+    "",
+]
+
+
 def get_text_splitter():
     return RecursiveCharacterTextSplitter(
         chunk_size=settings.chunk_size,
         chunk_overlap=settings.chunk_overlap,
+        separators=PERSIAN_AWARE_SEPARATORS,
         add_start_index=True,
     )
 
