@@ -19,7 +19,7 @@ docx2txt
 pypdf
 
 redis
+pika
 
 sqlalchemy
 psycopg[binary]
-

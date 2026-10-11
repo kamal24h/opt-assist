@@ -7,37 +7,48 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     # تنظیمات پایگاه داده رابطه‌ای (PostgreSQL)
-    postgres_user: str = "assistant_user"
-    postgres_password: str = "aRian2502aSsist2026"
-    postgres_db: str = "assistant_db"
-    postgres_host: str = "postgres"
-    postgres_port: int = 5432
+    postgres_user: str = "POSTGRES_USER"
+    postgres_password: str = "POSTGRES_PASSWORD"
+    postgres_db: str = "POSTGRES_DB"
+    postgres_host: str = "POSTGRES_HOST"
+    postgres_port: int = "POSTGRES_PORT"
 
     # تنظیمات Vector DB (Qdrant)
-    qdrant_url: str = "http://qdrant:6333"
-    qdrant_api_key: Optional[str] = None
-    collection_name: str = "assistant_knowledge1"
+    qdrant_url: str = "QDRANT_URL"
+    qdrant_api_key: Optional[str] = "QDRANT_API_KEY"
+    collection_name: str = "COLLECTION_NAME"
 
     # تنظیمات Ollama و هوش مصنوعی
-    ollama_url: str = "http://ollama:11434"
-    llm_model: str = "qwen3:8b"
+    ollama_url: str = "OLLAMA_URL"
+    llm_model: str = "LLM_MODEL"
     # llm_model: str = "partai/dorna-llama3"
-    embedding_model: str = "qllama/bge-m3:q4_k_m"
+    embedding_model: str = "EMBEDDING_MODEL"
 
     # تنظیمات Chunker و پردازش اسناد
-    chunk_size: int = 800
-    chunk_overlap: int = 120
-    embed_batch_size: int = 32
+    chunk_size: int = "CHUNK_SIZE"
+    chunk_overlap: int = "CHUNK_OVERLAP"
+    embed_batch_size: int = "EMBED_BATCH_SIZE"
 
     # تنظیمات Cache (Redis)
-    redis_host: str = "redis"
-    redis_port: int = 6379
-    redis_password: Optional[str] = None
+    redis_host: str = "REDIS_HOST"
+    redis_port: int = "REDIS_PORT"
+    redis_password: Optional[str] = "REDIS_PASSWORD"
     redis_ttl_seconds: int = 86400  # ۱ روز
 
     # تنظیمات تاریخچه مکالمه
     # حداکثر تعداد پیام‌هایی که به LLM داده می‌شود (۵ نوبت user+assistant = ۱۰ پیام)
     chat_history_max_messages: int = 10
+
+    # تنظیمات RabbitMQ
+    rabbitmq_host: str = "RABBITMQ_HOST"
+    rabbitmq_port: int = "RABBITMQ_PORT"
+    rabbitmq_user: str = "RABBITMQ_USER"
+    rabbitmq_password: str = "RABBITMQ_PASSWORD"
+    rabbitmq_vhost: str = "RABBITMQ_VHOST"
+    rabbitmq_exchange: str = "RABBITMQ_EXCHANGE"
+    rabbitmq_queue: str = "RABBITMQ_QUEUE"
+    rabbitmq_routing_key: str = "RABBITMQ_ROUTING_KEY"
+    rabbitmq_enabled: bool = "RABBITMQ_ENABLED"
 
     # تولید URL دیتابیس بدون نیاز به ترکیب دستی رشته‌ها
     @computed_field
@@ -52,7 +63,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        extra="ignore",  # نادیده گرفتن متغیرهای اضافه موجود در .env
+        extra="ignore",
     )
 
 

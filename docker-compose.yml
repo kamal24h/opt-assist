@@ -63,7 +63,16 @@ services:
       - CHUNK_OVERLAP=${CHUNK_OVERLAP:-120}
       - EMBED_BATCH_SIZE=${EMBED_BATCH_SIZE:-32}
       - REDIS_HOST=redis
-      - REDIS_PORT=6379      
+      - REDIS_PORT=6379
+      - RABBITMQ_HOST=${RABBITMQ_HOST:-rabbitmq}
+      - RABBITMQ_PORT=${RABBITMQ_PORT:-5672}
+      - RABBITMQ_USER=${RABBITMQ_USER:-admin}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-admin}
+      - RABBITMQ_VHOST=${RABBITMQ_VHOST:-/}
+      - RABBITMQ_EXCHANGE=${RABBITMQ_EXCHANGE:-LogAi}
+      - RABBITMQ_QUEUE=${RABBITMQ_QUEUE:-LogAi}
+      - RABBITMQ_ROUTING_KEY=${RABBITMQ_ROUTING_KEY:-message.created}
+      - RABBITMQ_ENABLED=${RABBITMQ_ENABLED:-true}      
     depends_on:
       - qdrant
       - ollama

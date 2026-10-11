@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from config import settings
 from database import Conversation, Message
+from message_broker import MessageBroker, build_message_payload
 from redis_client import ConversationCache, get_redis_client
 
 logger = logging.getLogger(__name__)
@@ -135,10 +136,11 @@ class ConversationService:
         redis_client=None,
     ) -> Message:
         """
-        ثبت پیام در PostgreSQL (منبع حقیقت) و سپس dual-write به Redis.
+        ثبت پیام در PostgreSQL (منبع حقیقت)، سپس dual-write به Redis
+        و انتشار رویداد به RabbitMQ.
 
-        در صورت عدم دسترسی به Redis، خطا پرتاب نمی‌شود و سیستم روی Postgres
-        به کار خود ادامه می‌دهد.
+        در صورت عدم دسترسی به Redis یا RabbitMQ، خطا پرتاب نمی‌شود و
+        سیستم روی Postgres به کار خود ادامه می‌دهد.
         """
         msg = Message(
             id=uuid.uuid4(),
@@ -179,6 +181,26 @@ class ConversationService:
                     "Failed to append message to Redis for %s: %s",
                     conversation_id,
                     exc,
+                )
+
+        # انتشار رویداد پیام به RabbitMQ (best-effort)
+        if settings.rabbitmq_enabled:
+            try:
+                payload = build_message_payload(
+                    message_id=str(msg.id),
+                    conversation_id=str(conversation_id),
+                    tenant_id=conv.tenant_id if conv else None,
+                    user_id=conv.user_id if conv else None,
+                    app_id=conv.app_id if conv else None,
+                    role=role,
+                    content=content,
+                    meta_info=meta_info,
+                    created_at=msg.created_at,
+                )
+                MessageBroker.publish_message_event(payload)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to publish message event for %s: %s", msg.id, exc
                 )
 
         return msg
