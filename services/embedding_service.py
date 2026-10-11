@@ -8,7 +8,7 @@ class EmbeddingService:
     def __init__(self):
         self.embeddings = OllamaEmbeddings(
             model=settings.embedding_model,
-            base_url=settings.ollama_base_url,
+            base_url=settings.ollama_url,
         )
 
     async def embed_documents(
