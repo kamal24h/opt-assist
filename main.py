@@ -26,6 +26,13 @@ from ingest_service import (
     delete_document_vectors
 )
 
+from conversation_service import ConversationService
+from rag_service import generate_rag_response
+from schemas import (
+    ConversationCreate, ConversationUpdate, 
+    ConversationOut, ConversationDetailOut, MessageOut, MessageCreateRequest
+)
+
 # ساخت جداول دیتابیس در صورت عدم وجود
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -539,4 +546,115 @@ async def delete_document(document_id: uuid.UUID, db: Session = Depends(get_db))
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"خطا در حذف سند: {str(e)}")
+
+# ----------------- اندپوینت‌های جدید و استاندارد مکالمات -----------------
+
+@app.post("/api/v1/conversations", response_model=ConversationOut)
+async def create_new_conversation(req: ConversationCreate, db: Session = Depends(get_db)):
+    return ConversationService.create_conversation(
+        db=db,
+        app_id=req.appId,
+        tenant_id=req.tenantId,
+        user_id=req.userId,
+        title=req.title
+    )
+
+@app.get("/api/v1/conversations", response_model=List[ConversationOut])
+async def list_user_conversations(
+    tenantId: str = Query(...),
+    userId: str = Query(...),
+    appId: Optional[str] = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db)
+):
+    return ConversationService.list_conversations(
+        db=db,
+        tenant_id=tenantId,
+        user_id=userId,
+        app_id=appId,
+        limit=limit,
+        offset=offset
+    )
+
+@app.get("/api/v1/conversations/{conv_id}", response_model=ConversationDetailOut)
+async def get_conversation_details(
+    conv_id: uuid.UUID,
+    tenantId: Optional[str] = Query(None),
+    userId: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    conv = ConversationService.get_conversation(db, conv_id, tenant_id=tenantId, user_id=userId)
+    if not conv:
+        raise HTTPException(status_code=404, detail="مکالمه مورد نظر یافت نشد.")
+    return conv
+
+@app.get("/api/v1/conversations/{conv_id}/messages", response_model=List[MessageOut])
+async def get_conversation_messages(
+    conv_id: uuid.UUID,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db)
+):
+    return ConversationService.get_messages(db, conversation_id=conv_id, limit=limit, offset=offset)
+
+@app.post("/api/v1/conversations/{conv_id}/messages", response_model=MessageOut)
+async def send_message_and_reply(
+    conv_id: uuid.UUID,
+    req: MessageCreateRequest,
+    db: Session = Depends(get_db)
+):
+    conv = ConversationService.get_conversation(db, conv_id, tenant_id=req.tenantId, user_id=req.userId)
+    if not conv:
+        raise HTTPException(status_code=404, detail="مکالمه یافت نشد.")
+    if conv.status != "active":
+        raise HTTPException(status_code=400, detail="این مکالمه بسته شده است و امکان ارسال پیام جدید وجود ندارد.")
+
+    # ۱. ثبت فوری پیام کاربر در PostgreSQL (حتی اگر LLM با خطا مواجه شود، پیام کاربر محفوظ است)
+    user_msg = ConversationService.add_message(
+        db=db,
+        conversation_id=conv_id,
+        role="user",
+        content=req.prompt
+    )
+
+    try:
+        # ۲. بازیابی تاریخچه چند پیام اخیر برای تغذیه حافظه مدل
+        history = ConversationService.get_recent_chat_history(db, conversation_id=conv_id, max_messages=6)
+        
+        # ۳. تولید پاسخ با RAG و ثبت منابع بازیابی‌شده
+        answer, sources_meta = generate_rag_response(question=req.prompt, chat_history=history)
+
+        # ۴. ذخیره فوری پاسخ دستیار در PostgreSQL همراه با متادیتا
+        asst_msg = ConversationService.add_message(
+            db=db,
+            conversation_id=conv_id,
+            role="assistant",
+            content=answer,
+            meta_info={"sources": sources_meta, "status": "completed"}
+        )
+        return asst_msg
+
+    except Exception as e:
+        # ثبت وضعیت خطا در صورت بروز مشکل در LLM جهت ردیابی کامل
+        ConversationService.add_message(
+            db=db,
+            conversation_id=conv_id,
+            role="assistant",
+            content="متأسفانه در پردازش پاسخ خطایی رخ داد.",
+            meta_info={"status": "failed", "error": str(e)}
+        )
+        raise HTTPException(status_code=500, detail=f"خطا در تولید پاسخ دستیار: {str(e)}")
+
+@app.patch("/api/v1/conversations/{conv_id}", response_model=ConversationOut)
+async def update_conversation_status_or_title(
+    conv_id: uuid.UUID,
+    req: ConversationUpdate,
+    db: Session = Depends(get_db)
+):
+    conv = ConversationService.get_conversation(db, conv_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="مکالمه یافت نشد.")
+    return ConversationService.update_conversation(db, conv, title=req.title, status=req.status)
+
 
