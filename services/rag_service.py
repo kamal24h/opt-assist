@@ -10,8 +10,14 @@ from qdrant_client import QdrantClient
 
 from config import settings
 
-client = QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key or None)
-embeddings = OllamaEmbeddings(model=settings.embedding_model, base_url=settings.ollama_url)
+def _get_vector_store() -> QdrantVectorStore:
+    client = QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key or None)
+    embeddings = OllamaEmbeddings(model=settings.embedding_model, base_url=settings.ollama_url)
+    return QdrantVectorStore(
+        client=client,
+        collection_name=settings.collection_name,
+        embedding=embeddings,
+    )
 
 SYSTEM_PROMPT = """
 تو یک دستیار هوشمند فارسی‌زبان برای کاربران سازمانی هستی.
@@ -45,12 +51,9 @@ def generate_rag_response(
     chat_history: List[Tuple[str, str]] = None,
     k_docs: int = 4
 ) -> Tuple[str, List[Dict[str, Any]]]:
-    vector_store = QdrantVectorStore(
-        client=client,
-        collection_name=settings.collection_name,
-        embedding=embeddings,
-    )
+    vector_store = _get_vector_store()
     
+        
     retriever = vector_store.as_retriever(search_kwargs={"k": k_docs})
     docs = retriever.invoke(question)
     context_text = "\n\n".join([d.page_content for d in docs])

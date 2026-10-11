@@ -4,7 +4,6 @@ from typing import Optional
 from pydantic import computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 class Settings(BaseSettings):
     # تنظیمات پایگاه داده رابطه‌ای (PostgreSQL)
     postgres_user: str = "assistant_user"
@@ -21,7 +20,7 @@ class Settings(BaseSettings):
     # تنظیمات Ollama و هوش مصنوعی
     ollama_url: str = "http://ollama:11434"
     llm_model: str = "qwen3:8b"
-    #llm_model: str = "partai/dorna-llama3"
+    # llm_model: str = "partai/dorna-llama3"
     embedding_model: str = "qllama/bge-m3:q4_k_m"
 
     # تنظیمات Chunker و پردازش اسناد

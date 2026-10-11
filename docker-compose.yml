@@ -13,7 +13,7 @@ services:
       - OLLAMA_NUM_PARALLEL=2
       - OLLAMA_MAX_LOADED_MODELS=2      
     networks:
-      - assistat_network
+      - assistant_network
     deploy:
       resources:
         reservations:
@@ -36,7 +36,7 @@ services:
       - QDRANT__SERVICE__GRPC_PORT=6334
       - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY}
     networks:
-      - assistat_network
+      - assistant_network
 
   # ---------- FastAPI Backend ----------
   fastapi:
@@ -55,10 +55,10 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-assistant_db}
       - QDRANT_URL=http://qdrant:6333
       - QDRANT_API_KEY=${QDRANT_API_KEY}
-      - COLLECTION_NAME=${COLLECTION_NAME:-documents}
+      - COLLECTION_NAME=${COLLECTION_NAME:-assistant_knowledge1}
       - OLLAMA_URL=http://ollama:11434
       - LLM_MODEL=${LLM_MODEL:-qwen3:8b}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-qllama/bge-m3:q4_k_m}
       - CHUNK_SIZE=${CHUNK_SIZE:-800}
       - CHUNK_OVERLAP=${CHUNK_OVERLAP:-120}
       - EMBED_BATCH_SIZE=${EMBED_BATCH_SIZE:-32}
@@ -70,7 +70,7 @@ services:
       - postgres
       - redis
     networks:
-      - assistat_network
+      - assistant_network
 
   # ---------- Relational DB (PostgreSQL) ----------
   postgres:
@@ -91,7 +91,7 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - assistat_network
+      - assistant_network
 
   # ---------- Cache (Redis) ----------
   redis:
@@ -104,7 +104,7 @@ services:
       - "6379:6379"
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     networks:
-      - assistat_network
+      - assistant_network
 
 volumes:
   ollama_data:
@@ -113,5 +113,5 @@ volumes:
   redis_data:
 
 networks:
-  assistat_network:
+  assistant_network:
     external: true
