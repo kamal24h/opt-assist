@@ -1,13 +1,14 @@
 # redis_client.py
-import os
 import json
 import redis
+from config import settings
 
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")
-REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
-
-# اتصال پایدار با ConnectionPool
-redis_pool = redis.ConnectionPool(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+redis_pool = redis.ConnectionPool(
+    host=settings.redis_host, 
+    port=settings.redis_port, 
+    password=settings.redis_password,
+    decode_responses=True
+)
 
 def get_redis_client():
     return redis.Redis(connection_pool=redis_pool)
@@ -15,7 +16,6 @@ def get_redis_client():
 class ConversationCache:
     @staticmethod
     def create_conversation(redis_client: redis.Redis, conv_id: str, app_id: str, tenant_id: str, user_id: str, ttl_seconds: int = 86400):
-        """ذخیره متادیتای مکالمه در ریدیس با زمان انقضا (TTL) 24 ساعته"""
         key = f"conv:{conv_id}:meta"
         data = {
             "conversation_id": conv_id,
@@ -34,7 +34,6 @@ class ConversationCache:
 
     @staticmethod
     def append_message(redis_client: redis.Redis, conv_id: str, role: str, content: str):
-        """افزودن پیام جدید به لیست پیام‌های محاوره در کش"""
         key = f"conv:{conv_id}:messages"
         msg = {"role": role, "content": content}
         redis_client.rpush(key, json.dumps(msg))

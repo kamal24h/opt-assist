@@ -1,193 +1,72 @@
+
 # api/v1/conversations.py
-
-from fastapi import (
-    APIRouter,
-    Depends,
-    HTTPException,
-)
-
+import uuid
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from database import get_db
-
+from services.conversation_service import ConversationService
 from schemas.conversation import (
-    BeginConversationRequest,
-    BeginConversationResponse,
-    QueryConversationRequest,
-    QueryConversationResponse,
-    EndConversationRequest,
-    EndConversationResponse,
+    ConversationCreate,
+    ConversationUpdate,
+    ConversationOut,
+    ConversationDetailOut,
 )
 
-from services.conversation_service import (
-    ConversationService,
-)
-
-from services.assistant_service import (
-    AssistantService,
-)
+router = APIRouter(prefix="/api/v1/conversations", tags=["Conversations"])
 
 
-router = APIRouter()
+@router.post("", response_model=ConversationOut)
+def create_conversation(req: ConversationCreate, db: Session = Depends(get_db)):
+    return ConversationService.create_conversation(
+        db=db,
+        app_id=req.appId,
+        tenant_id=req.tenantId,
+        user_id=req.userId,
+        title=req.title
+    )
 
-assistant_service = AssistantService()
 
-
-@router.post(
-    "/beginConversation",
-    response_model=BeginConversationResponse,
-)
-async def begin_conversation(
-    request: BeginConversationRequest,
-    db: Session = Depends(get_db),
+@router.get("", response_model=List[ConversationOut])
+def list_conversations(
+    tenantId: str = Query(...),
+    userId: str = Query(...),
+    appId: Optional[str] = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db)
 ):
-
-    try:
-
-        conversation = ConversationService.begin(
-            db=db,
-            app_id=request.app_id,
-            tenant_id=request.tenant_id,
-            user_id=request.user_id,
-        )
-
-        return BeginConversationResponse(
-            conversationId=conversation.id,
-            status="created",
-            appId=conversation.app_id,
-            tenantId=conversation.tenant_id,
-            userId=conversation.user_id,
-        )
-
-    except Exception as exc:
-
-        db.rollback()
-
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "Failed to begin conversation: "
-                f"{str(exc)}"
-            ),
-        )
+    return ConversationService.list_conversations(
+        db=db,
+        tenant_id=tenantId,
+        user_id=userId,
+        app_id=appId,
+        limit=limit,
+        offset=offset
+    )
 
 
-@router.post(
-    "/query",
-    response_model=QueryConversationResponse,
-)
-async def query_assistant(
-    request: QueryConversationRequest,
+@router.get("/{conv_id}", response_model=ConversationDetailOut)
+def get_conversation(
+    conv_id: uuid.UUID,
+    tenantId: Optional[str] = Query(None),
+    userId: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
 ):
-
-    # ------------------------------------------
-    # Legacy standalone RAG query
-    # ------------------------------------------
-
-    if request.conversation_id is None:
-
-        try:
-
-            answer = assistant_service.ask(
-                request.prompt
-            )
-
-            return QueryConversationResponse(
-                answer=answer,
-                conversationId=None,
-            )
-
-        except Exception as exc:
-
-            raise HTTPException(
-                status_code=500,
-                detail=str(exc),
-            )
-
-    # ------------------------------------------
-    # Conversation query
-    # ------------------------------------------
-
-    if not ConversationService.is_active(
-        request.conversation_id
-    ):
-
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                "مکالمه یافت نشد یا "
-                "پایان یافته است."
-            ),
-        )
-
-    try:
-
-        answer = assistant_service.ask_conversation(
-            conversation_id=request.conversation_id,
-            prompt=request.prompt,
-        )
-
-        return QueryConversationResponse(
-            conversationId=request.conversation_id,
-            answer=answer,
-        )
-
-    except Exception as exc:
-
-        raise HTTPException(
-            status_code=500,
-            detail=str(exc),
-        )
+    conv = ConversationService.get_conversation(db, conv_id, tenant_id=tenantId, user_id=userId)
+    if not conv:
+        raise HTTPException(status_code=404, detail="مکالمه یافت نشد.")
+    return conv
 
 
-@router.post(
-    "/endConversation",
-    response_model=EndConversationResponse,
-)
-async def end_conversation(
-    request: EndConversationRequest,
-    db: Session = Depends(get_db),
+@router.patch("/{conv_id}", response_model=ConversationOut)
+def update_conversation(
+    conv_id: uuid.UUID,
+    req: ConversationUpdate,
+    db: Session = Depends(get_db)
 ):
-
-    try:
-
-        conversation, message_count = (
-            ConversationService.end(
-                db=db,
-                conversation_id=request.conversation_id,
-            )
-        )
-
-        if not conversation:
-
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    "مکالمه در پایگاه داده "
-                    "یافت نشد."
-                ),
-            )
-
-        return EndConversationResponse(
-            status="success",
-            message=(
-                "مکالمه پایان یافت و داده‌ها "
-                "در پایگاه داده اصلی آرشیو شدند."
-            ),
-            total_messages_saved=message_count,
-        )
-
-    except HTTPException:
-        raise
-
-    except Exception as exc:
-
-        db.rollback()
-
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "Failed to end conversation: "
-                f"{str(exc)}"
-            ),
-        )
+    conv = ConversationService.get_conversation(db, conv_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="مکالمه یافت نشد.")
+    return ConversationService.update_conversation(db, conv, title=req.title, status=req.status)

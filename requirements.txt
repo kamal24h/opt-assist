@@ -11,6 +11,7 @@ langchain-text-splitters
 qdrant-client
 
 pydantic
+pydantic-settings>=2.0.0
 python-multipart
 
 unstructured
@@ -21,3 +22,4 @@ redis
 
 sqlalchemy
 psycopg[binary]
+

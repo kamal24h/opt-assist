@@ -2,15 +2,15 @@ import hashlib
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from app.core.config import settings
-from app.schemas.document import (
+from core.config import settings
+from schemas.document import (
     CreateTextDocumentRequest,
     CreateTextDocumentResponse,
 )
-from app.services.embedding_service import (
+from services.embedding_service import (
     EmbeddingService,
 )
-from app.services.qdrant_document_service import (
+from services.qdrant_document_service import (
     QdrantDocumentService,
 )
 

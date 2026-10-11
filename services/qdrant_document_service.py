@@ -331,12 +331,11 @@ class QdrantDocumentService:
                             value="chunk"
                         ),
                     ),
+
                     FieldCondition(
                         key="document_id",
-                        match=MatchValue(
-                            value=document_id
-                        ),
-                    ],
+                        match=MatchValue(value=document_id),                                        
+                    ),
                 ],
                 must_not=[
                     FieldCondition(

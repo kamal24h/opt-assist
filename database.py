@@ -1,19 +1,16 @@
-import os
+# database.py
 import uuid
 from datetime import datetime
-from sqlalchemy import create_engine, Column, String, DateTime, Text, ForeignKey, Integer
+from sqlalchemy import (
+    create_engine, Column, String, DateTime, Text, 
+    ForeignKey, Integer, Index
+)
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
-POSTGRES_USER = os.getenv("POSTGRES_USER", "assistant_user")
-POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "aRian2502aSsist2026")
-POSTGRES_DB = os.getenv("POSTGRES_DB", "assistant_db")
-POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgres")
-POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
+from config import settings
 
-DATABASE_URL = f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
-
-engine = create_engine(DATABASE_URL)
+engine = create_engine(settings.database_url)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -23,10 +20,10 @@ class Document(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     doc_name = Column(String(255), nullable=False)
-    doc_type = Column(String(50), nullable=False)        # pdf, docx, text, etc.
+    doc_type = Column(String(50), nullable=False)
     department = Column(String(100), nullable=False, index=True)
     app_id = Column(String(100), nullable=False, index=True)
-    meta_info = Column(JSONB, nullable=True)             # metadata + version
+    meta_info = Column(JSONB, nullable=True)
     chunks_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -35,24 +32,37 @@ class Conversation(Base):
     __tablename__ = "conversations"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    app_id = Column(String(100), nullable=False, index=True)
-    tenant_id = Column(String(100), nullable=False, index=True)
-    user_id = Column(String(100), nullable=False, index=True)
-    status = Column(String(20), default="active")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    app_id = Column(String(100), nullable=False)
+    tenant_id = Column(String(100), nullable=False)
+    user_id = Column(String(100), nullable=False)
+    title = Column(String(255), nullable=True)
+    status = Column(String(20), default="active", nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     ended_at = Column(DateTime, nullable=True)
 
-    messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
+    messages = relationship(
+        "Message", 
+        back_populates="conversation", 
+        cascade="all, delete-orphan",
+        order_by="Message.created_at"
+    )
+
+    __table_args__ = (
+        Index("ix_conversations_user_tenant_app", "tenant_id", "user_id", "app_id"),
+        Index("ix_conversations_updated_at", "updated_at"),
+    )
 
 
 class Message(Base):
     __tablename__ = "messages"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=False)
+    conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True)
     role = Column(String(20), nullable=False)
     content = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    meta_info = Column(JSONB, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
     conversation = relationship("Conversation", back_populates="messages")
 

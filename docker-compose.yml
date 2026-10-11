@@ -38,7 +38,7 @@ services:
     networks:
       - assistat_network
 
-  # ---------- Fast API (FastAPI) ----------
+  # ---------- FastAPI Backend ----------
   fastapi:
     build: .
     container_name: fastapi_backend
@@ -48,16 +48,20 @@ services:
     volumes:
       - ./docs:/app/docs
     environment:      
-      - QDRANT_URL=http://qdrant:6333
-      - QDRANT_API_KEY=${QDRANT_API_KEY}
-      - OLLAMA_URL=http://ollama:11434
-      - LLM_MODEL=${LLM_MODEL:-qwen3:8b}
-      - COLLECTION_NAME=${QDRANT_COLLECTION:-documents}
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
-      - POSTGRES_USER=assistant_user
+      - POSTGRES_USER=${POSTGRES_USER:-assistant_user}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=assistant_db
+      - POSTGRES_DB=${POSTGRES_DB:-assistant_db}
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_API_KEY=${QDRANT_API_KEY}
+      - COLLECTION_NAME=${COLLECTION_NAME:-documents}
+      - OLLAMA_URL=http://ollama:11434
+      - LLM_MODEL=${LLM_MODEL:-qwen3:8b}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text}
+      - CHUNK_SIZE=${CHUNK_SIZE:-800}
+      - CHUNK_OVERLAP=${CHUNK_OVERLAP:-120}
+      - EMBED_BATCH_SIZE=${EMBED_BATCH_SIZE:-32}
       - REDIS_HOST=redis
       - REDIS_PORT=6379      
     depends_on:
@@ -78,18 +82,18 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: assistant_user
+      POSTGRES_USER: ${POSTGRES_USER:-assistant_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: assistant_db
+      POSTGRES_DB: ${POSTGRES_DB:-assistant_db}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U assistant_user -d assistant_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-assistant_user} -d ${POSTGRES_DB:-assistant_db}"]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
       - assistat_network
 
-  # ---------- Cache / Session (Redis) ----------
+  # ---------- Cache (Redis) ----------
   redis:
     image: redis:7-alpine
     container_name: assistant-redis
@@ -102,14 +106,12 @@ services:
     networks:
       - assistat_network
 
-# ---------- تعریف ولوم‌ها (سطح ریشه، بدون تورفتگی) ----------
 volumes:
   ollama_data:
   qdrant_data:
   postgres_data:
   redis_data:
 
-# ---------- تعریف شبکه (سطح ریشه، بدون تورفتگی) ----------
 networks:
   assistat_network:
     external: true

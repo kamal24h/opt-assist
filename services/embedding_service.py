@@ -1,6 +1,6 @@
 from langchain_ollama import OllamaEmbeddings
 
-from app.core.config import settings
+from core.config import settings
 
 
 class EmbeddingService:
