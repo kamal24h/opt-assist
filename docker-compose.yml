@@ -11,7 +11,7 @@ services:
     environment:
       - OLLAMA_HOST=0.0.0.0
       - OLLAMA_NUM_PARALLEL=2
-      - OLLAMA_MAX_LOADED_MODELS=2
+      - OLLAMA_MAX_LOADED_MODELS=2      
     networks:
       - assistat_network
     deploy:
@@ -24,7 +24,7 @@ services:
 
   # ---------- Vector DB (Qdrant) ----------
   qdrant:
-    image: qdrant/qdrant:v1.19.0
+    image: qdrant/qdrant:v1.15.0
     container_name: assistant-qdrant
     restart: unless-stopped
     volumes:
@@ -47,17 +47,19 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - ./docs:/app/docs
-    environment:
+    environment:      
       - QDRANT_URL=http://qdrant:6333
       - QDRANT_API_KEY=${QDRANT_API_KEY}
       - OLLAMA_URL=http://ollama:11434
+      - LLM_MODEL=${LLM_MODEL:-qwen3:8b}
+      - COLLECTION_NAME=${QDRANT_COLLECTION:-documents}
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_USER=assistant_user
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=assistant_db
       - REDIS_HOST=redis
-      - REDIS_PORT=6379
+      - REDIS_PORT=6379      
     depends_on:
       - qdrant
       - ollama
@@ -97,12 +99,8 @@ services:
     ports:
       - "6379:6379"
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
-    #command: sh -c "redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass $${REDIS_PASSWORD}"
-    # environment:
-    # - REDIS_PASSWORD=${REDIS_PASSWORD}
     networks:
       - assistat_network
-    
 
 # ---------- تعریف ولوم‌ها (سطح ریشه، بدون تورفتگی) ----------
 volumes:

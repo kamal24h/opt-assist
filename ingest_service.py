@@ -1,30 +1,196 @@
+# ingest_service.py
 
 import os
-import uuid
-from typing import List, Dict, Any
-from langchain_community.document_loaders import UnstructuredWordDocumentLoader, PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_ollama import OllamaEmbeddings
-from langchain_qdrant import QdrantVectorStore
-from qdrant_client import QdrantClient
-from qdrant_client.http.models import Distance, VectorParams, Filter, FieldCondition, MatchValue
 
-QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant:6333")
-QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "992b61d895665cd63484456f34950944dd181ea656ed5e2bf2e4268dae4e96d8")
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")
-COLLECTION_NAME = os.getenv("COLLECTION_NAME", "assistant_knowledge1")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "qllama/bge-m3:q4_k_m")
+from typing import (
+    Any,
+    Dict,
+    List,
+)
 
-def get_qdrant_client():
-    return QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
+from langchain_community.document_loaders import (
+    UnstructuredWordDocumentLoader,
+    PyPDFLoader,
+)
 
-def ensure_collection_exists(client: QdrantClient, embeddings: OllamaEmbeddings):
-    if not client.collection_exists(COLLECTION_NAME):
-        sample_vector = embeddings.embed_query("init")
-        client.create_collection(
-            collection_name=COLLECTION_NAME,
-            vectors_config=VectorParams(size=len(sample_vector), distance=Distance.COSINE),
+from langchain_core.documents import Document as LangChainDocument
+
+from langchain_text_splitters import (
+    RecursiveCharacterTextSplitter,
+)
+
+from langchain_ollama import (
+    OllamaEmbeddings,
+)
+
+from langchain_qdrant import (
+    QdrantVectorStore,
+)
+
+from qdrant_client import (
+    QdrantClient,
+)
+
+from qdrant_client.http.models import (
+    Distance,
+    VectorParams,
+    Filter,
+    FieldCondition,
+    MatchValue,
+)
+
+
+QDRANT_URL = os.getenv(
+    "QDRANT_URL",
+    "http://qdrant:6333",
+)
+
+QDRANT_API_KEY = os.getenv(
+    "QDRANT_API_KEY",
+    "",
+)
+
+OLLAMA_URL = os.getenv(
+    "OLLAMA_URL",
+    "http://ollama:11434",
+)
+
+COLLECTION_NAME = os.getenv(
+    "COLLECTION_NAME",
+    "assistant_knowledge1",
+)
+
+EMBEDDING_MODEL = os.getenv(
+    "EMBEDDING_MODEL",
+    "qllama/bge-m3:q4_k_m",
+)
+
+CHUNK_SIZE = int(
+    os.getenv(
+        "CHUNK_SIZE",
+        "1000",
+    )
+)
+
+CHUNK_OVERLAP = int(
+    os.getenv(
+        "CHUNK_OVERLAP",
+        "200",
+    )
+)
+
+EMBED_BATCH_SIZE = int(
+    os.getenv(
+        "EMBED_BATCH_SIZE",
+        "32",
+    )
+)
+
+
+def get_qdrant_client() -> QdrantClient:
+
+    return QdrantClient(
+        url=QDRANT_URL,
+        api_key=QDRANT_API_KEY or None,
+    )
+
+
+def get_embeddings() -> OllamaEmbeddings:
+
+    return OllamaEmbeddings(
+        model=EMBEDDING_MODEL,
+        base_url=OLLAMA_URL,
+    )
+
+
+def get_text_splitter():
+
+    return RecursiveCharacterTextSplitter(
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP,
+        add_start_index=True,
+    )
+
+
+def ensure_collection_exists(
+    client: QdrantClient,
+    embeddings: OllamaEmbeddings,
+):
+
+    if client.collection_exists(
+        COLLECTION_NAME
+    ):
+        return
+
+    sample_vector = embeddings.embed_query(
+        "init"
+    )
+
+    client.create_collection(
+        collection_name=COLLECTION_NAME,
+        vectors_config=VectorParams(
+            size=len(sample_vector),
+            distance=Distance.COSINE,
+        ),
+    )
+
+
+def _get_vector_store():
+
+    client = get_qdrant_client()
+    embeddings = get_embeddings()
+
+    ensure_collection_exists(
+        client,
+        embeddings,
+    )
+
+    return QdrantVectorStore(
+        client=client,
+        collection_name=COLLECTION_NAME,
+        embedding=embeddings,
+    )
+
+
+def _add_documents_in_batches(
+    vector_store: QdrantVectorStore,
+    documents: List[LangChainDocument],
+):
+
+    for index in range(
+        0,
+        len(documents),
+        EMBED_BATCH_SIZE,
+    ):
+
+        batch = documents[
+            index:index + EMBED_BATCH_SIZE
+        ]
+
+        vector_store.add_documents(
+            batch
         )
+
+
+def _split_and_enrich(
+    documents: List[LangChainDocument],
+    base_metadata: Dict[str, Any],
+):
+
+    splitter = get_text_splitter()
+
+    chunks = splitter.split_documents(
+        documents
+    )
+
+    for chunk in chunks:
+
+        chunk.metadata.update(
+            base_metadata
+        )
+
+    return chunks
+
 
 def process_and_index_document(
     file_path: str,
@@ -33,47 +199,59 @@ def process_and_index_document(
     doc_type: str,
     department: str,
     app_id: str,
-    metadata: Dict[str, Any]
+    metadata: Dict[str, Any],
 ) -> int:
-    """پردازش یک فایل و ذخیره تکه‌های آن همراه با متادیتای اختصاصی سند"""
-    
-    # 1. خواندن فایل بر اساس فرمت
-    if doc_type.lower() == "pdf":
-        loader = PyPDFLoader(file_path)
-    elif doc_type.lower() in ["docx", "doc"]:
-        loader = UnstructuredWordDocumentLoader(file_path)
-    else:
-        raise ValueError(f"نوع سند '{doc_type}' پشتیبانی نمی‌شود.")
 
-    raw_docs = loader.load()
-    if not raw_docs:
+    normalized_type = doc_type.lower()
+
+    if normalized_type == "pdf":
+
+        loader = PyPDFLoader(
+            file_path
+        )
+
+    elif normalized_type in (
+        "doc",
+        "docx",
+    ):
+
+        loader = UnstructuredWordDocumentLoader(
+            file_path
+        )
+
+    else:
+
+        raise ValueError(
+            f"نوع سند '{doc_type}' پشتیبانی نمی‌شود."
+        )
+
+    raw_documents = loader.load()
+
+    if not raw_documents:
         return 0
 
-    # 2. خرد کردن متن
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200, add_start_index=True)
-    chunks = text_splitter.split_documents(raw_docs)
+    base_metadata = {
+        "doc_id": doc_id,
+        "doc_name": doc_name,
+        "department": department,
+        "app_id": app_id,
+        **(metadata or {}),
+    }
 
-    # 3. افزودن متادیتا به تمام Chunkها جهت کوئری و حذف سریع در آینده
-    for chunk in chunks:
-        chunk.metadata.update({
-            "doc_id": doc_id,
-            "doc_name": doc_name,
-            "department": department,
-            "app_id": app_id,
-            **(metadata or {})
-        })
-
-    # 4. ایندکس در Qdrant بدون حذف کل کالکشن
-    client = get_qdrant_client()
-    embeddings = OllamaEmbeddings(model=EMBEDDING_MODEL, base_url=OLLAMA_URL)
-    ensure_collection_exists(client, embeddings)
-
-    vector_store = QdrantVectorStore(
-        client=client,
-        collection_name=COLLECTION_NAME,
-        embedding=embeddings,
+    chunks = _split_and_enrich(
+        raw_documents,
+        base_metadata,
     )
-    vector_store.add_documents(chunks)
+
+    if not chunks:
+        return 0
+
+    vector_store = _get_vector_store()
+
+    _add_documents_in_batches(
+        vector_store,
+        chunks,
+    )
 
     return len(chunks)
 
@@ -83,74 +261,63 @@ def process_and_index_text_document(
     doc_id: str,
     doc_name: str,
     app_id: str,
-    metadata: Dict[str, Any]
+    metadata: Dict[str, Any],
 ) -> int:
-    """خردسازی و وکتورسازی یک سند متنی که بدون فایل ارسال شده است."""
+
     if not doc_text or not doc_text.strip():
         return 0
 
-    # متن خام را مستقیماً به Document لانگ‌چین تبدیل می‌کنیم.
-    from langchain_core.documents import Document as LangChainDocument
-
-    raw_doc = LangChainDocument(
+    document = LangChainDocument(
         page_content=doc_text,
-        metadata={
-            "doc_id": doc_id,
-            "doc_name": doc_name,
-            "doc_type": "text",
-            "department": "",
-            "app_id": app_id,
-            **(metadata or {})
-        }
+        metadata={},
     )
 
-    # همان سیاست chunking API فایل‌محور حفظ می‌شود تا رفتار RAG یکسان باشد.
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200,
-        add_start_index=True
+    base_metadata = {
+        "doc_id": doc_id,
+        "doc_name": doc_name,
+        "app_id": app_id,
+        **(metadata or {}),
+    }
+
+    chunks = _split_and_enrich(
+        [document],
+        base_metadata,
     )
-    chunks = text_splitter.split_documents([raw_doc])
 
     if not chunks:
         return 0
 
-    # متادیتای سند روی تمام chunkها قرار می‌گیرد تا فیلتر و حذف سند در Qdrant
-    # دقیقاً مانند اسناد PDF/DOCX موجود کار کند.
-    for chunk in chunks:
-        chunk.metadata.update({
-            "doc_id": doc_id,
-            "doc_name": doc_name,
-            "doc_type": "text",
-            "department": "",
-            "app_id": app_id,
-            **(metadata or {})
-        })
+    vector_store = _get_vector_store()
 
-    client = get_qdrant_client()
-    embeddings = OllamaEmbeddings(model=EMBEDDING_MODEL, base_url=OLLAMA_URL)
-    ensure_collection_exists(client, embeddings)
-
-    vector_store = QdrantVectorStore(
-        client=client,
-        collection_name=COLLECTION_NAME,
-        embedding=embeddings,
+    _add_documents_in_batches(
+        vector_store,
+        chunks,
     )
-    vector_store.add_documents(chunks)
 
     return len(chunks)
 
-def delete_document_vectors(doc_id: str):
-    """حذف تمام بردارهای مرتبط با یک سند بر اساس doc_id"""
+
+def delete_document_vectors(
+    doc_id: str,
+):
+
     client = get_qdrant_client()
+
+    if not client.collection_exists(
+        COLLECTION_NAME
+    ):
+        return
+
     client.delete(
         collection_name=COLLECTION_NAME,
         points_selector=Filter(
             must=[
                 FieldCondition(
                     key="metadata.doc_id",
-                    match=MatchValue(value=doc_id)
+                    match=MatchValue(
+                        value=doc_id
+                    ),
                 )
             ]
-        )
+        ),
     )

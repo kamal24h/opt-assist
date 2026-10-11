@@ -1,11 +1,7 @@
-# database.py
 import os
 import uuid
 from datetime import datetime
-from sqlalchemy import (
-    create_engine, Column, String, DateTime, Text, 
-    ForeignKey, Integer, Index
-)
+from sqlalchemy import create_engine, Column, String, DateTime, Text, ForeignKey, Integer
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
@@ -27,10 +23,10 @@ class Document(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     doc_name = Column(String(255), nullable=False)
-    doc_type = Column(String(50), nullable=False)
+    doc_type = Column(String(50), nullable=False)        # pdf, docx, text, etc.
     department = Column(String(100), nullable=False, index=True)
     app_id = Column(String(100), nullable=False, index=True)
-    meta_info = Column(JSONB, nullable=True)
+    meta_info = Column(JSONB, nullable=True)             # metadata + version
     chunks_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -39,32 +35,24 @@ class Conversation(Base):
     __tablename__ = "conversations"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    app_id = Column(String(100), nullable=False)
-    tenant_id = Column(String(100), nullable=False)
-    user_id = Column(String(100), nullable=False)
-    title = Column(String(255), nullable=True)
-    status = Column(String(20), default="active", nullable=False)  # active, closed, archived
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    app_id = Column(String(100), nullable=False, index=True)
+    tenant_id = Column(String(100), nullable=False, index=True)
+    user_id = Column(String(100), nullable=False, index=True)
+    status = Column(String(20), default="active")
+    created_at = Column(DateTime, default=datetime.utcnow)
     ended_at = Column(DateTime, nullable=True)
 
-    messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at")
-
-    __table_args__ = (
-        Index("ix_conversations_user_tenant_app", "tenant_id", "user_id", "app_id"),
-        Index("ix_conversations_updated_at", "updated_at"),
-    )
+    messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
 
 
 class Message(Base):
     __tablename__ = "messages"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True)
-    role = Column(String(20), nullable=False)  # user, assistant, system
+    conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=False)
+    role = Column(String(20), nullable=False)
     content = Column(Text, nullable=False)
-    meta_info = Column(JSONB, nullable=True)    # sources, retrieved docs, latency, status
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
     conversation = relationship("Conversation", back_populates="messages")
 
