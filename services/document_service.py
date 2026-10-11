@@ -2,7 +2,7 @@ import hashlib
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from core.config import settings
+from config import settings
 from schemas.document import (
     CreateTextDocumentRequest,
     CreateTextDocumentResponse,
