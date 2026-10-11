@@ -21,7 +21,7 @@ class EmbeddingService:
 
         result: list[list[float]] = []
 
-        batch_size = settings.embedding_batch_size
+        batch_size = settings.embed_batch_size
 
         for start in range(0, len(texts), batch_size):
 
