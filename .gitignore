@@ -1,5 +1,7 @@
-.mypy_cashe/*
-.mypy_cashe
 
+.git
 .env
 config.py
+
+.mypy_cashe/*
+.mypy_cashe

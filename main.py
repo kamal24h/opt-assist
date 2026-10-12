@@ -1,14 +1,9 @@
 # main.py
 
 from contextlib import asynccontextmanager
-
-from fastapi import FastAPI
-
-from database import (
-    Base,
-    engine,
-)
-
+from fastapi import FastAPI, Depends
+from security import require_api_key
+from database import (Base, engine)
 from api.v1.conversations import router as conversations_router
 from api.v1.messages import router as messages_router
 
@@ -27,7 +22,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Enterprise Assistant RAG API",
+    title="Arian Enterprise Assistant API",
     lifespan=lifespan,
 )
 
@@ -48,7 +43,6 @@ app.include_router(
     documents_router,
 )
 
-
 # --------------------------------------------------
 # Health
 # --------------------------------------------------
@@ -59,3 +53,9 @@ async def health():
     return {
         "status": "healthy"
     }
+
+@app.get("/test-protected", dependencies=[Depends(require_api_key)])
+async def test_protected():
+    return {
+            "status": "healthy"
+        }

@@ -201,3 +201,31 @@ def delete_document(document_id: uuid.UUID, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"خطا در حذف سند: {str(e)}")
+
+
+@router.delete("/by-app/{app_id}")
+def delete_documents_by_app(app_id: str, db: Session = Depends(get_db)):
+    docs = db.query(Document).filter(Document.app_id == app_id).all()
+    if not docs:
+        raise HTTPException(
+            status_code=404,
+            detail="هیچ سندی با این appId یافت نشد."
+        )
+
+    try:
+        for doc in docs:
+            delete_document_vectors(doc_id=str(doc.id))
+            db.delete(doc)
+        db.commit()
+        return {
+            "status": "success",
+            "message": f"{len(docs)} سند با appId '{app_id}' با موفقیت حذف شد.",
+            "deletedCount": len(docs),
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"خطا در حذف اسناد: {str(e)}"
+        )
+    

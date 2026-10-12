@@ -3,6 +3,7 @@
 import uuid
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
+#from security import require_api_key
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -14,8 +15,11 @@ from schemas.conversation import (
     ConversationDetailOut,
 )
 
-router = APIRouter(prefix="/api/v1/conversations", tags=["Conversations"])
-
+router = APIRouter(
+    prefix="/api/v1/conversations",
+    tags=["Conversations"],
+    #dependencies=[Depends(require_api_key)],
+)
 
 @router.post("", response_model=ConversationOut)
 def create_conversation(req: ConversationCreate, db: Session = Depends(get_db)):
@@ -26,7 +30,6 @@ def create_conversation(req: ConversationCreate, db: Session = Depends(get_db)):
         user_id=req.userId,
         title=req.title
     )
-
 
 @router.get("", response_model=List[ConversationOut])
 def list_conversations(
