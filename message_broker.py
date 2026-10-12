@@ -103,25 +103,37 @@ def build_message_payload(
     message_id: str,
     conversation_id: str,
     tenant_id: Optional[str],
+    tenant_desc: Optional[str],
     user_id: Optional[str],
+    user_name: Optional[str],
     app_id: Optional[str],
     role: str,
     content: str,
     meta_info: Optional[Dict[str, Any]],
+    duration: Optional[float],
+    error: Optional[str],
     created_at: datetime,
 ) -> Dict[str, Any]:
     """
     ساخت payload استاندارد برای رویداد پیام.
+
+    فیلدها:
+      - duration: مدت زمان تولید پاسخ بر حسب ثانیه (فقط برای assistant؛ برای user = None)
+      - error:    متن خطا در صورت شکست تولید پاسخ (در حالت عادی None)
     """
     return {
         "event_type": "message.created",
         "message_id": message_id,
         "conversation_id": conversation_id,
         "tenant_id": tenant_id,
+        "tenant_desc": tenant_desc,
         "user_id": user_id,
+        "user_name": user_name,
         "app_id": app_id,
         "role": role,
         "content": content,
         "meta_info": meta_info or {},
+        "duration": duration,
+        "error": error,
         "created_at": created_at.isoformat(),
     }

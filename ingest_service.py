@@ -63,7 +63,6 @@ def ensure_collection_exists(client: QdrantClient, embeddings: OllamaEmbeddings)
         ),
     )
 
-
 def _get_vector_store():
     client = get_qdrant_client()
     embeddings = get_embeddings()
@@ -75,12 +74,10 @@ def _get_vector_store():
         embedding=embeddings,
     )
 
-
 def _add_documents_in_batches(vector_store: QdrantVectorStore, documents: List[LangChainDocument]):
     for index in range(0, len(documents), settings.embed_batch_size):
         batch = documents[index : index + settings.embed_batch_size]
         vector_store.add_documents(batch)
-
 
 def _split_and_enrich(documents: List[LangChainDocument], base_metadata: Dict[str, Any]):
     splitter = get_text_splitter()
@@ -88,7 +85,6 @@ def _split_and_enrich(documents: List[LangChainDocument], base_metadata: Dict[st
     for chunk in chunks:
         chunk.metadata.update(base_metadata)
     return chunks
-
 
 def process_and_index_document(
     file_path: str,

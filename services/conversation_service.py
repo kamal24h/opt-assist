@@ -38,12 +38,16 @@ class ConversationService:
         tenant_id: str,
         user_id: str,
         title: Optional[str] = None,
+        user_name: Optional[str] = None,
+        tenant_desc: Optional[str] = None,
     ) -> Conversation:
         conv = Conversation(
             id=uuid.uuid4(),
             app_id=app_id,
             tenant_id=tenant_id,
             user_id=user_id,
+            user_name=user_name,
+            tenant_desc=tenant_desc,
             title=title or "گفتگوی جدید",
             status="active",
         )
@@ -61,6 +65,8 @@ class ConversationService:
                     app_id=conv.app_id,
                     tenant_id=conv.tenant_id,
                     user_id=conv.user_id,
+                    user_name=conv.user_name,
+                    tenant_desc=conv.tenant_desc,
                 )
             except Exception as exc:
                 logger.warning(
@@ -133,11 +139,16 @@ class ConversationService:
         role: str,
         content: str,
         meta_info: Optional[dict] = None,
+        duration: Optional[float] = None,
+        error: Optional[str] = None,
         redis_client=None,
     ) -> Message:
         """
         ثبت پیام در PostgreSQL (منبع حقیقت)، سپس dual-write به Redis
         و انتشار رویداد به RabbitMQ.
+
+        - duration: مدت زمان تولید پاسخ (ثانیه) — فقط برای assistant.
+        - error:    متن خطا در صورت شکست — در حالت عادی None.
 
         در صورت عدم دسترسی به Redis یا RabbitMQ، خطا پرتاب نمی‌شود و
         سیستم روی Postgres به کار خود ادامه می‌دهد.
@@ -190,11 +201,15 @@ class ConversationService:
                     message_id=str(msg.id),
                     conversation_id=str(conversation_id),
                     tenant_id=conv.tenant_id if conv else None,
+                    tenant_desc=conv.tenant_desc if conv else None,
                     user_id=conv.user_id if conv else None,
+                    user_name=conv.user_name if conv else None,
                     app_id=conv.app_id if conv else None,
                     role=role,
                     content=content,
                     meta_info=meta_info,
+                    duration=duration,
+                    error=error,
                     created_at=msg.created_at,
                 )
                 MessageBroker.publish_message_event(payload)

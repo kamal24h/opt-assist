@@ -42,6 +42,8 @@ class ConversationCache:
         app_id: str,
         tenant_id: str,
         user_id: str,
+        user_name: Optional[str] = None,
+        tenant_desc: Optional[str] = None,
         ttl_seconds: int = settings.redis_ttl_seconds,
     ) -> None:
         key = f"conv:{conv_id}:meta"
@@ -50,9 +52,12 @@ class ConversationCache:
             "app_id": app_id,
             "tenant_id": tenant_id,
             "user_id": user_id,
+            "user_name": user_name,
+            "tenant_desc": tenant_desc,
             "status": "active",
         }
-        redis_client.set(key, json.dumps(data), ex=ttl_seconds)
+        redis_client.set(key, json.dumps(data, ensure_ascii=False), ex=ttl_seconds)
+   
 
     @staticmethod
     def get_conversation_meta(redis_client: redis.Redis, conv_id: str):

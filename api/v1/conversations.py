@@ -28,7 +28,9 @@ def create_conversation(req: ConversationCreate, db: Session = Depends(get_db)):
         app_id=req.appId,
         tenant_id=req.tenantId,
         user_id=req.userId,
-        title=req.title
+        title=req.title,
+        user_name=req.userName,
+        tenant_desc=req.tenantDesc,
     )
 
 @router.get("", response_model=List[ConversationOut])

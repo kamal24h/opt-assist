@@ -35,6 +35,8 @@ class Conversation(Base):
     app_id = Column(String(100), nullable=False)
     tenant_id = Column(String(100), nullable=False)
     user_id = Column(String(100), nullable=False)
+    user_name = Column(String(255), nullable=True)
+    tenant_desc = Column(String(500), nullable=True)
     title = Column(String(255), nullable=True)
     status = Column(String(20), default="active", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

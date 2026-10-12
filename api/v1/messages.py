@@ -1,4 +1,5 @@
 # api/v1/messages.py
+import time
 import uuid
 from typing import List
 
@@ -47,15 +48,13 @@ def send_message(
         raise HTTPException(status_code=400, detail="این مکالمه فعال نیست.")
 
     # ۱. خواندن تاریخچه (۱۰ پیام آخر = ۵ نوبت user+assistant)
-    #    این کار قبل از ذخیره پیام جاری انجام می‌شود تا پیام جدید
-    #    در تاریخچه تکرار نشود.
     history = ConversationService.get_recent_chat_history(
         db,
         conversation_id=conv_id,
         max_messages=settings.chat_history_max_messages,
     )
 
-    # ۲. ثبت پیام کاربر در PostgreSQL و Redis
+    # ۲. ثبت پیام کاربر (بدون duration و بدون error)
     ConversationService.add_message(
         db=db,
         conversation_id=conv_id,
@@ -63,32 +62,42 @@ def send_message(
         content=req.prompt,
     )
 
+    # ۳. تولید پاسخ با RAG (اندازه‌گیری زمان)
+    started_at = time.perf_counter()
     try:
-        # ۳. تولید پاسخ با RAG (با تاریخچه مکالمه)
         answer, sources = generate_rag_response(
             question=req.prompt,
             chat_history=history,
         )
+        duration = time.perf_counter() - started_at
 
-        # ۴. ثبت پاسخ دستیار در PostgreSQL و Redis
+        # ۴. ثبت پاسخ دستیار (با duration)
         assistant_msg = ConversationService.add_message(
             db=db,
             conversation_id=conv_id,
             role="assistant",
             content=answer,
             meta_info={"sources": sources, "status": "completed"},
+            duration=duration,
+            error=None,
         )
         return assistant_msg
 
     except Exception as e:
+        duration = time.perf_counter() - started_at
+        error_text = str(e)
+
+        # ثبت پیام assistant با وضعیت failed و متن خطا
         ConversationService.add_message(
             db=db,
             conversation_id=conv_id,
             role="assistant",
             content="متأسفانه در تولید پاسخ مشکلی رخ داد.",
-            meta_info={"status": "failed", "error": str(e)},
+            meta_info={"status": "failed", "error": error_text},
+            duration=duration,
+            error=error_text,
         )
         raise HTTPException(
             status_code=500,
-            detail=f"خطا در پردازش هوش مصنوعی: {str(e)}",
+            detail=f"خطا در پردازش هوش مصنوعی: {error_text}",
         )
