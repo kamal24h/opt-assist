@@ -2,8 +2,8 @@
 import uuid
 from datetime import datetime
 from sqlalchemy import (
-    create_engine, Column, String, DateTime, Text, 
-    ForeignKey, Integer, Index
+    create_engine, Column, String, DateTime, Text,
+    ForeignKey, Integer, Index, Float,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
@@ -44,10 +44,10 @@ class Conversation(Base):
     ended_at = Column(DateTime, nullable=True)
 
     messages = relationship(
-        "Message", 
-        back_populates="conversation", 
+        "Message",
+        back_populates="conversation",
         cascade="all, delete-orphan",
-        order_by="Message.created_at"
+        order_by="Message.created_at",
     )
 
     __table_args__ = (
@@ -60,10 +60,24 @@ class Message(Base):
     __tablename__ = "messages"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True)
-    role = Column(String(20), nullable=False)
-    content = Column(Text, nullable=False)
+    conversation_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # ---- ستون‌های جدید: مدل turn-based ----
+    query = Column(Text, nullable=True)     # prompt کاربر
+    answer = Column(Text, nullable=True)    # پاسخ assistant (در ابتدا null)
+    duration = Column(Float, nullable=True) # ثانیه، فقط برای turn کامل‌شده
+    error = Column(Text, nullable=True)     # متن خطا در صورت شکست
     meta_info = Column(JSONB, nullable=True)
+
+    # ---- ستون‌های قدیمی: برای مهاجرت حفظ شده‌اند ----
+    role = Column(String(20), nullable=True)
+    content = Column(Text, nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
     conversation = relationship("Conversation", back_populates="messages")

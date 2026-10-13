@@ -47,19 +47,18 @@ def send_message(
     if conv.status != "active":
         raise HTTPException(status_code=400, detail="این مکالمه فعال نیست.")
 
-    # ۱. خواندن تاریخچه (۱۰ پیام آخر = ۵ نوبت user+assistant)
+    # ۱. خواندن تاریخچه (۵ نوبت آخر)
     history = ConversationService.get_recent_chat_history(
         db,
         conversation_id=conv_id,
-        max_messages=settings.chat_history_max_messages,
+        max_turns=settings.chat_history_max_turns,
     )
 
-    # ۲. ثبت پیام کاربر (بدون duration و بدون error)
-    ConversationService.add_message(
+    # ۲. ثبت prompt کاربر (یک ردیف با query و answer خالی)
+    turn = ConversationService.add_query(
         db=db,
         conversation_id=conv_id,
-        role="user",
-        content=req.prompt,
+        query=req.prompt,
     )
 
     # ۳. تولید پاسخ با RAG (اندازه‌گیری زمان)
@@ -71,31 +70,28 @@ def send_message(
         )
         duration = time.perf_counter() - started_at
 
-        # ۴. ثبت پاسخ دستیار (با duration)
-        assistant_msg = ConversationService.add_message(
+        # ۴. به‌روزرسانی همان ردیف با answer + انتشار رویداد
+        completed = ConversationService.complete_turn(
             db=db,
-            conversation_id=conv_id,
-            role="assistant",
-            content=answer,
-            meta_info={"sources": sources, "status": "completed"},
+            message_id=turn.id,
+            answer=answer,
             duration=duration,
             error=None,
+            meta_info={"sources": sources, "status": "completed"},
         )
-        return assistant_msg
+        return completed
 
     except Exception as e:
         duration = time.perf_counter() - started_at
         error_text = str(e)
 
-        # ثبت پیام assistant با وضعیت failed و متن خطا
-        ConversationService.add_message(
+        ConversationService.complete_turn(
             db=db,
-            conversation_id=conv_id,
-            role="assistant",
-            content="متأسفانه در تولید پاسخ مشکلی رخ داد.",
-            meta_info={"status": "failed", "error": error_text},
+            message_id=turn.id,
+            answer="متأسفانه در تولید پاسخ مشکلی رخ داد.",
             duration=duration,
             error=error_text,
+            meta_info={"status": "failed"},
         )
         raise HTTPException(
             status_code=500,

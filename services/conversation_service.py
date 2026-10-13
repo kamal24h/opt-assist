@@ -16,10 +16,6 @@ logger = logging.getLogger(__name__)
 
 
 def _safe_redis_client():
-    """
-    دریافت کلاینت Redis با مدیریت خطا.
-    اگر Redis در دسترس نباشد، None برمی‌گرداند تا سیستم روی Postgres ادامه دهد.
-    """
     try:
         return get_redis_client()
     except Exception as exc:
@@ -55,7 +51,6 @@ class ConversationService:
         db.commit()
         db.refresh(conv)
 
-        # dual-write meta به Redis (best-effort)
         redis_client = _safe_redis_client()
         if redis_client is not None:
             try:
@@ -98,15 +93,15 @@ class ConversationService:
         limit: int = 20,
         offset: int = 0,
     ) -> List[Conversation]:
-        query = db.query(Conversation).filter(
+        q = db.query(Conversation).filter(
             Conversation.tenant_id == tenant_id,
             Conversation.user_id == user_id,
         )
         if app_id:
-            query = query.filter(Conversation.app_id == app_id)
+            q = q.filter(Conversation.app_id == app_id)
 
         return (
-            query.order_by(desc(Conversation.updated_at))
+            q.order_by(desc(Conversation.updated_at))
             .offset(offset)
             .limit(limit)
             .all()
@@ -130,35 +125,24 @@ class ConversationService:
         db.refresh(conv)
         return conv
 
-    # ---------- Messages ----------
+    # ---------- Turns ----------
 
     @staticmethod
-    def add_message(
+    def add_query(
         db: Session,
         conversation_id: uuid.UUID,
-        role: str,
-        content: str,
-        meta_info: Optional[dict] = None,
-        duration: Optional[float] = None,
-        error: Optional[str] = None,
+        query: str,
         redis_client=None,
     ) -> Message:
         """
-        ثبت پیام در PostgreSQL (منبع حقیقت)، سپس dual-write به Redis
-        و انتشار رویداد به RabbitMQ.
-
-        - duration: مدت زمان تولید پاسخ (ثانیه) — فقط برای assistant.
-        - error:    متن خطا در صورت شکست — در حالت عادی None.
-
-        در صورت عدم دسترسی به Redis یا RabbitMQ، خطا پرتاب نمی‌شود و
-        سیستم روی Postgres به کار خود ادامه می‌دهد.
+        ثبت prompt کاربر. یک ردیف جدید با query پر و answer خالی ساخته می‌شود.
+        هیچ رویدادی به RabbitMQ ارسال نمی‌شود تا زمانی که پاسخ آماده شود.
         """
         msg = Message(
             id=uuid.uuid4(),
             conversation_id=conversation_id,
-            role=role,
-            content=content,
-            meta_info=meta_info,
+            query=query,
+            answer=None,
         )
         db.add(msg)
 
@@ -169,53 +153,107 @@ class ConversationService:
         )
         if conv:
             conv.updated_at = datetime.utcnow()
-            if role == "user" and (conv.title == "گفتگوی جدید" or not conv.title):
-                conv.title = content[:60] + ("..." if len(content) > 60 else "")
+            if conv.title == "گفتگوی جدید" or not conv.title:
+                conv.title = query[:60] + ("..." if len(query) > 60 else "")
 
         db.commit()
         db.refresh(msg)
 
-        # dual-write به Redis (best-effort)
         if redis_client is None:
             redis_client = _safe_redis_client()
 
         if redis_client is not None:
             try:
-                ConversationCache.append_message(
+                ConversationCache.upsert_turn(
                     redis_client,
                     str(conversation_id),
-                    role=role,
-                    content=content,
+                    message_id=str(msg.id),
+                    query=query,
+                    created_at=msg.created_at.isoformat(),
                 )
             except Exception as exc:
                 logger.warning(
-                    "Failed to append message to Redis for %s: %s",
-                    conversation_id,
-                    exc,
+                    "Failed to cache query turn %s: %s", msg.id, exc
                 )
 
-        # انتشار رویداد پیام به RabbitMQ (best-effort)
+        return msg
+
+    @staticmethod
+    def complete_turn(
+        db: Session,
+        message_id: uuid.UUID,
+        answer: str,
+        duration: Optional[float],
+        error: Optional[str] = None,
+        meta_info: Optional[dict] = None,
+        redis_client=None,
+    ) -> Message:
+        """
+        به‌روزرسانی ردیف turn با answer و انتشار رویداد به RabbitMQ.
+        """
+        msg = db.query(Message).filter(Message.id == message_id).first()
+        if not msg:
+            raise ValueError(f"Message {message_id} not found")
+
+        msg.answer = answer
+        msg.duration = duration
+        msg.error = error
+        msg.meta_info = meta_info
+
+        conv = (
+            db.query(Conversation)
+            .filter(Conversation.id == msg.conversation_id)
+            .first()
+        )
+        if conv:
+            conv.updated_at = datetime.utcnow()
+
+        db.commit()
+        db.refresh(msg)
+
+        if redis_client is None:
+            redis_client = _safe_redis_client()
+
+        if redis_client is not None:
+            try:
+                ConversationCache.upsert_turn(
+                    redis_client,
+                    str(msg.conversation_id),
+                    message_id=str(msg.id),
+                    query=msg.query,
+                    answer=answer,
+                    duration=duration,
+                    error=error,
+                    meta_info=meta_info,
+                    created_at=msg.created_at.isoformat(),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to update cached turn %s: %s", msg.id, exc
+                )
+
+        # انتشار رویداد تکمیل turn به RabbitMQ (best-effort)
         if settings.rabbitmq_enabled:
             try:
                 payload = build_message_payload(
                     message_id=str(msg.id),
-                    conversation_id=str(conversation_id),
+                    conversation_id=str(msg.conversation_id),
                     tenant_id=conv.tenant_id if conv else None,
                     tenant_desc=conv.tenant_desc if conv else None,
                     user_id=conv.user_id if conv else None,
                     user_name=conv.user_name if conv else None,
                     app_id=conv.app_id if conv else None,
-                    role=role,
-                    content=content,
-                    meta_info=meta_info,
+                    query=msg.query or "",
+                    answer=answer,
                     duration=duration,
                     error=error,
+                    meta_info=meta_info,
                     created_at=msg.created_at,
                 )
                 MessageBroker.publish_message_event(payload)
             except Exception as exc:
                 logger.warning(
-                    "Failed to publish message event for %s: %s", msg.id, exc
+                    "Failed to publish turn event for %s: %s", msg.id, exc
                 )
 
         return msg
@@ -240,56 +278,75 @@ class ConversationService:
     def get_recent_chat_history(
         db: Session,
         conversation_id: uuid.UUID,
-        max_messages: int = settings.chat_history_max_messages,
+        max_turns: int = settings.chat_history_max_turns,
         redis_client=None,
     ) -> List[Tuple[str, str]]:
         """
-        دریافت آخرین `max_messages` پیام مکالمه به ترتیب زمانی (قدیم -> جدید).
+        آخرین `max_turns` نوبت را به ترتیب زمانی برمی‌گرداند.
+        هر نوبت به دو پیام (user, assistant) تبدیل می‌شود.
+        نوبت‌هایی که answer خالی دارند، فقط پیام user دارند.
 
         استراتژی:
-          ۱. تلاش برای خواندن از Redis
-          ۲. در صورت خالی/خطا، خواندن از PostgreSQL
-          ۳. در صورت موفقیت از Postgres، repopulate کردن Redis (best-effort)
+          ۱. تلاش از Redis
+          ۲. Fallback به Postgres + repopulate Redis
         """
         if redis_client is None:
             redis_client = _safe_redis_client()
 
+        turns: List[dict] = []
+
         # ۱. تلاش از Redis
         if redis_client is not None:
             try:
-                cached = ConversationCache.get_recent_messages(
-                    redis_client, str(conversation_id), max_messages
+                turns = ConversationCache.get_recent_turns(
+                    redis_client, str(conversation_id), max_turns
                 )
-                if cached:
-                    return [(m["role"], m["content"]) for m in cached]
             except Exception as exc:
                 logger.warning(
-                    "Redis history read failed for %s: %s", conversation_id, exc
+                    "Redis turns read failed for %s: %s", conversation_id, exc
                 )
+                turns = []
 
         # ۲. Fallback به Postgres
-        recent = (
-            db.query(Message)
-            .filter(Message.conversation_id == conversation_id)
-            .order_by(desc(Message.created_at))
-            .limit(max_messages)
-            .all()
-        )
-        messages: List[Tuple[str, str]] = [
-            (m.role, m.content) for m in reversed(recent)
-        ]
+        if not turns:
+            recent = (
+                db.query(Message)
+                .filter(Message.conversation_id == conversation_id)
+                .order_by(desc(Message.created_at))
+                .limit(max_turns)
+                .all()
+            )
+            turns = [
+                {
+                    "message_id": str(m.id),
+                    "query": m.query,
+                    "answer": m.answer,
+                    "duration": m.duration,
+                    "error": m.error,
+                    "meta_info": m.meta_info or {},
+                    "created_at": m.created_at.isoformat() if m.created_at else None,
+                }
+                for m in reversed(recent)
+            ]
 
-        # ۳. Repopulate Redis از Postgres (best-effort)
-        if redis_client is not None and messages:
-            try:
-                ConversationCache.set_messages(
-                    redis_client,
-                    str(conversation_id),
-                    [{"role": r, "content": c} for r, c in messages],
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Redis repopulate failed for %s: %s", conversation_id, exc
-                )
+            # ۳. Repopulate Redis
+            if redis_client is not None and turns:
+                try:
+                    ConversationCache.set_turns(
+                        redis_client, str(conversation_id), turns
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Redis turns repopulate failed for %s: %s",
+                        conversation_id,
+                        exc,
+                    )
 
-        return messages
+        # تبدیل turn ها به پیام‌های (role, content)
+        history: List[Tuple[str, str]] = []
+        for t in turns:
+            if t.get("query"):
+                history.append(("user", t["query"]))
+            if t.get("answer"):
+                history.append(("assistant", t["answer"]))
+        return history

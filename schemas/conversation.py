@@ -21,10 +21,17 @@ class ConversationUpdate(BaseModel):
 
 class MessageOut(BaseModel):
     id: uuid.UUID
-    role: str
-    content: str
+    conversation_id: uuid.UUID
+    query: Optional[str] = None
+    answer: Optional[str] = None
+    duration: Optional[float] = None
+    error: Optional[str] = None
     meta_info: Optional[Dict[str, Any]] = None
     created_at: datetime
+
+    # برای سازگاری با داده‌های مهاجرت‌شده
+    role: Optional[str] = None
+    content: Optional[str] = None
 
     class Config:
         from_attributes = True

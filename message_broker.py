@@ -107,22 +107,19 @@ def build_message_payload(
     user_id: Optional[str],
     user_name: Optional[str],
     app_id: Optional[str],
-    role: str,
-    content: str,
-    meta_info: Optional[Dict[str, Any]],
+    query: str,
+    answer: Optional[str],
     duration: Optional[float],
     error: Optional[str],
+    meta_info: Optional[Dict[str, Any]],
     created_at: datetime,
 ) -> Dict[str, Any]:
     """
-    ساخت payload استاندارد برای رویداد پیام.
-
-    فیلدها:
-      - duration: مدت زمان تولید پاسخ بر حسب ثانیه (فقط برای assistant؛ برای user = None)
-      - error:    متن خطا در صورت شکست تولید پاسخ (در حالت عادی None)
+    payload رویداد تکمیل یک turn (query + answer).
+    رویداد فقط یک بار، بعد از آماده شدن پاسخ، منتشر می‌شود.
     """
     return {
-        "event_type": "message.created",
+        "event_type": "message.turn.completed",
         "message_id": message_id,
         "conversation_id": conversation_id,
         "tenant_id": tenant_id,
@@ -130,10 +127,10 @@ def build_message_payload(
         "user_id": user_id,
         "user_name": user_name,
         "app_id": app_id,
-        "role": role,
-        "content": content,
-        "meta_info": meta_info or {},
+        "query": query,
+        "answer": answer,
         "duration": duration,
         "error": error,
+        "meta_info": meta_info or {},
         "created_at": created_at.isoformat(),
     }
