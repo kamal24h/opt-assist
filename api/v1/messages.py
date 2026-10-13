@@ -7,10 +7,16 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from config import settings
-from database import get_db
+
+from database import Message, get_db
+
 from services.conversation_service import ConversationService
 from services.rag_service import generate_rag_response
-from schemas.conversation import MessageOut, SendMessageRequest
+from schemas.conversation import (
+    MessageOut,
+    SendMessageRequest,
+    MessageLikeRequest,
+)
 
 router = APIRouter(
     prefix="/api/v1/conversations/{conv_id}/messages",
@@ -97,3 +103,22 @@ def send_message(
             status_code=500,
             detail=f"خطا در پردازش هوش مصنوعی: {error_text}",
         )
+
+
+@router.patch("/{message_id}/like", response_model=MessageOut)
+def like_message(
+    conv_id: uuid.UUID,
+    message_id: uuid.UUID,
+    req: MessageLikeRequest,
+    db: Session = Depends(get_db),
+):
+    # چک می‌کنیم پیام به این مکالمه تعلق داشته باشد
+    msg = (
+        db.query(Message)
+        .filter(Message.id == message_id, Message.conversation_id == conv_id)
+        .first()
+    )
+    if not msg:
+        raise HTTPException(status_code=404, detail="پیام یافت نشد.")
+    updated = ConversationService.set_message_like(db, message_id, req.like)
+    return updated   

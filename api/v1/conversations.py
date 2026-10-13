@@ -13,6 +13,7 @@ from schemas.conversation import (
     ConversationUpdate,
     ConversationOut,
     ConversationDetailOut,
+    ConversationFeedbackRequest,
 )
 
 router = APIRouter(
@@ -75,3 +76,17 @@ def update_conversation(
     if not conv:
         raise HTTPException(status_code=404, detail="مکالمه یافت نشد.")
     return ConversationService.update_conversation(db, conv, title=req.title, status=req.status)
+
+
+@router.patch("/{conv_id}/feedback")
+def set_conversation_feedback(
+    conv_id: uuid.UUID,
+    req: ConversationFeedbackRequest,
+    db: Session = Depends(get_db),
+):
+    conv = ConversationService.set_conversation_feedback(
+        db, conv_id, req.feedbackScore
+    )
+    if not conv:
+        raise HTTPException(status_code=404, detail="مکالمه یافت نشد.")
+    return {"status": "success"}

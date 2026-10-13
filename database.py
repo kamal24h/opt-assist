@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime
 from sqlalchemy import (
-    create_engine, Column, String, DateTime, Text,
+    create_engine, Column, String, DateTime, Text, Boolean,
     ForeignKey, Integer, Index, Float,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
@@ -38,6 +38,7 @@ class Conversation(Base):
     user_name = Column(String(255), nullable=True)
     tenant_desc = Column(String(500), nullable=True)
     title = Column(String(255), nullable=True)
+    feedback_score = Column(Integer, nullable=True)
     status = Column(String(20), default="active", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
@@ -73,6 +74,7 @@ class Message(Base):
     duration = Column(Float, nullable=True) # ثانیه، فقط برای turn کامل‌شده
     error = Column(Text, nullable=True)     # متن خطا در صورت شکست
     meta_info = Column(JSONB, nullable=True)
+    liked = Column(Boolean, nullable=True)
 
     # ---- ستون‌های قدیمی: برای مهاجرت حفظ شده‌اند ----
     role = Column(String(20), nullable=True)

@@ -70,6 +70,7 @@ class ConversationService:
 
         return conv
 
+
     @staticmethod
     def get_conversation(
         db: Session,
@@ -83,6 +84,7 @@ class ConversationService:
         if user_id:
             query = query.filter(Conversation.user_id == user_id)
         return query.first()
+
 
     @staticmethod
     def list_conversations(
@@ -107,6 +109,7 @@ class ConversationService:
             .all()
         )
 
+
     @staticmethod
     def update_conversation(
         db: Session,
@@ -126,6 +129,7 @@ class ConversationService:
         return conv
 
     # ---------- Turns ----------
+
 
     @staticmethod
     def add_query(
@@ -177,6 +181,7 @@ class ConversationService:
                 )
 
         return msg
+
 
     @staticmethod
     def complete_turn(
@@ -258,6 +263,7 @@ class ConversationService:
 
         return msg
 
+
     @staticmethod
     def get_messages(
         db: Session,
@@ -273,6 +279,7 @@ class ConversationService:
             .limit(limit)
             .all()
         )
+
 
     @staticmethod
     def get_recent_chat_history(
@@ -350,3 +357,39 @@ class ConversationService:
             if t.get("answer"):
                 history.append(("assistant", t["answer"]))
         return history
+
+
+    @staticmethod
+    def set_message_like(
+        db: Session,
+        message_id: uuid.UUID,
+        like_value: bool,
+    ) -> Optional[Message]:
+        msg = db.query(Message).filter(Message.id == message_id).first()
+        if not msg:
+            return None
+        msg.like = like_value
+        db.commit()
+        db.refresh(msg)
+        return msg
+
+    @staticmethod
+    def set_conversation_feedback(
+        db: Session,
+        conv_id: uuid.UUID,
+        feedback_score: int,
+    ) -> Optional[Conversation]:
+        conv = db.query(Conversation).filter(Conversation.id == conv_id).first()
+        if not conv:
+            return None
+        conv.feedback_score = feedback_score
+        conv.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(conv)
+        return conv
+
+
+    
+
+
+    
