@@ -1,10 +1,12 @@
 # database.py
 import uuid
 from datetime import datetime
+
 from sqlalchemy import (
-    create_engine, Column, String, DateTime, Text, Boolean,
-    ForeignKey, Integer, Index, Float,
+    create_engine, Column, String, DateTime, Text,
+    ForeignKey, Integer, Index, Float, Boolean,
 )
+
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
@@ -19,6 +21,16 @@ class Document(Base):
     __tablename__ = "documents"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    logical_doc_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    version = Column(Integer, nullable=False, default=1)
+    is_current = Column(Boolean, nullable=False, default=True)
+    previous_version_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    content_hash = Column(String(64), nullable=True)
+
     doc_name = Column(String(255), nullable=False)
     doc_type = Column(String(50), nullable=False)
     department = Column(String(100), nullable=False, index=True)
@@ -27,6 +39,11 @@ class Document(Base):
     chunks_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    __table_args__ = (
+        Index("ix_documents_logical_current", "logical_doc_id", "is_current"),
+        Index("ix_documents_app_current", "app_id", "is_current"),
+        Index("ix_documents_app_name_current", "app_id", "doc_name", "is_current"),
+    )
 
 class Conversation(Base):
     __tablename__ = "conversations"

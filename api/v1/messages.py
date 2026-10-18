@@ -72,6 +72,7 @@ def send_message(
     try:
         answer, sources = generate_rag_response(
             question=req.prompt,
+            app_id=conv.app_id,
             chat_history=history,
         )
         duration = time.perf_counter() - started_at
