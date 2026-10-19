@@ -70,11 +70,11 @@ def send_message(
     # ۳. تولید پاسخ با RAG (اندازه‌گیری زمان)
     started_at = time.perf_counter()
     try:
-        answer, sources = generate_rag_response(
+        answer, sources, form_id = generate_rag_response(
             question=req.prompt,
             app_id=conv.app_id,
             chat_history=history,
-        )
+        )        
         duration = time.perf_counter() - started_at
 
         # ۴. به‌روزرسانی همان ردیف با answer + انتشار رویداد
@@ -84,7 +84,7 @@ def send_message(
             answer=answer,
             duration=duration,
             error=None,
-            meta_info={"sources": sources, "status": "completed"},
+            meta_info={"sources": sources, "status": "completed", "formId": form_id},
         )
         return completed
 
@@ -106,7 +106,7 @@ def send_message(
         )
 
 
-@router.patch("/{message_id}/like", response_model=MessageOut)
+@router.patch("/{message_id}/liked", response_model=MessageOut)
 def like_message(
     conv_id: uuid.UUID,
     message_id: uuid.UUID,
@@ -121,5 +121,5 @@ def like_message(
     )
     if not msg:
         raise HTTPException(status_code=404, detail="پیام یافت نشد.")
-    updated = ConversationService.set_message_like(db, message_id, req.like)
+    updated = ConversationService.set_message_like(db, message_id, req.liked)
     return updated   

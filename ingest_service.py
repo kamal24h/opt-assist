@@ -285,3 +285,77 @@ def delete_document_vectors_by_logical_id(logical_doc_id: str):
 def delete_document_vectors(doc_id: str):
     """برای سازگاری با کد قبلی."""
     return delete_document_vectors_by_doc_id(doc_id)
+  
+
+def mark_version_not_current(logical_doc_id: str, version: int) -> None:
+    """
+    فلگ metadata.is_current وکتورهای یک نسخه خاص را False می‌کند.
+    برای همگام‌سازی Qdrant با Postgres هنگام ساخت نسخه جدید لازم است.
+    """
+    
+    client = get_qdrant_client()
+    if not client.collection_exists(settings.collection_name):
+        return
+
+    client.set_payload(
+        collection_name=settings.collection_name,
+        payload={"is_current": False},
+        #key="metadata",
+        points_selector=Filter(
+            must=[
+                FieldCondition(
+                    key="metadata.logical_doc_id",
+                    match=MatchValue(value=logical_doc_id),
+                ),
+                FieldCondition(
+                    key="metadata.doc_version",
+                    match=MatchValue(value=version),
+                ),
+            ]
+        ),
+    )
+
+
+def mark_version_current(logical_doc_id: str, version: int) -> None:
+    client = get_qdrant_client()
+    if not client.collection_exists(settings.collection_name):
+        return
+
+    client.set_payload(
+        collection_name=settings.collection_name,
+        payload={"is_current": True},
+        #key="metadata",
+        points_selector=Filter(
+            must=[
+                FieldCondition(
+                    key="metadata.logical_doc_id",
+                    match=MatchValue(value=logical_doc_id),
+                ),
+                FieldCondition(
+                    key="metadata.doc_version",
+                    match=MatchValue(value=version),
+                ),
+            ]
+        ),
+    )
+
+
+def delete_document_vectors_by_app_id(app_id: str) -> None:
+    """
+    حذف همه وکتورهای یک app_id (همه اسناد، همه نسخه‌ها).
+    """
+    client = get_qdrant_client()
+    if not client.collection_exists(settings.collection_name):
+        return
+
+    client.delete(
+        collection_name=settings.collection_name,
+        points_selector=Filter(
+            must=[
+                FieldCondition(
+                    key="metadata.app_id",
+                    match=MatchValue(value=app_id),
+                )
+            ]
+        ),
+    )

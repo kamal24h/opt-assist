@@ -1,11 +1,11 @@
-
 .mypy_cashe/*
 .mypy_cashe
 cache
-
 git
 *.env*
-
+env
 config
 .git
 .env
+venv
+config.py

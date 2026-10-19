@@ -130,7 +130,6 @@ class ConversationService:
 
     # ---------- Turns ----------
 
-
     @staticmethod
     def add_query(
         db: Session,
@@ -181,7 +180,6 @@ class ConversationService:
                 )
 
         return msg
-
 
     @staticmethod
     def complete_turn(
@@ -263,7 +261,6 @@ class ConversationService:
 
         return msg
 
-
     @staticmethod
     def get_messages(
         db: Session,
@@ -279,7 +276,6 @@ class ConversationService:
             .limit(limit)
             .all()
         )
-
 
     @staticmethod
     def get_recent_chat_history(
@@ -358,7 +354,6 @@ class ConversationService:
                 history.append(("assistant", t["answer"]))
         return history
 
-
     @staticmethod
     def set_message_like(
         db: Session,
@@ -371,6 +366,21 @@ class ConversationService:
         msg.like = like_value
         db.commit()
         db.refresh(msg)
+
+        if settings.rabbitmq_enabled:
+            try:
+                from message_broker import MessageBroker, build_message_row_payload
+                MessageBroker.publish_to_queue(
+                    "like_queue",
+                    build_message_row_payload(msg),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to publish like event for message %s: %s",
+                    msg.id,
+                    exc,
+                )
+
         return msg
 
     @staticmethod
@@ -386,10 +396,24 @@ class ConversationService:
         conv.updated_at = datetime.utcnow()
         db.commit()
         db.refresh(conv)
+
+        if settings.rabbitmq_enabled:
+            try:
+                from message_broker import (
+                    MessageBroker,
+                    build_conversation_row_payload,
+                )
+                MessageBroker.publish_to_queue(
+                    "conv_feedback",
+                    build_conversation_row_payload(conv),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to publish conv feedback for conversation %s: %s",
+                    conv.id,
+                    exc,
+                )
+
         return conv
-
-
-    
-
 
     

@@ -53,13 +53,12 @@ Context اسناد مرتبط:
 # {context}
 # """
 
-
 def generate_rag_response(
     question: str,
     app_id: str,
     chat_history: Optional[List[Tuple[str, str]]] = None,
     k_docs: int = 4,
-) -> Tuple[str, List[Dict[str, Any]]]:
+) -> Tuple[str, List[Dict[str, Any]], Optional[int]]:
     """
     تولید پاسخ RAG محدود به اسناد app_id مشخص و فقط نسخه‌های جاری.
     """
@@ -125,4 +124,7 @@ def generate_rag_response(
         "question": question,
     })
 
-    return answer, sources
+    from services.form_resolver import resolve_form_id
+    form_id = resolve_form_id(question=question, answer=answer, use_llm_fallback=True)
+
+    return answer, sources, form_id
