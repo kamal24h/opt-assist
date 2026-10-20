@@ -1,4 +1,10 @@
-.mypy_cashe/*
+.env
+config.py
 .mypy_cashe
+cache
+git
+.git
+venv
+docs/
 
 
