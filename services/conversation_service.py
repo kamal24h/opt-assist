@@ -353,7 +353,7 @@ class ConversationService:
             if t.get("answer"):
                 history.append(("assistant", t["answer"]))
         return history
-
+        
     @staticmethod
     def set_message_like(
         db: Session,
@@ -370,9 +370,15 @@ class ConversationService:
         if settings.rabbitmq_enabled:
             try:
                 from message_broker import MessageBroker, build_message_row_payload
+                # ← گرفتن conversation یک بار
+                conv = (
+                    db.query(Conversation)
+                    .filter(Conversation.id == msg.conversation_id)
+                    .first()
+                )
                 MessageBroker.publish_to_queue(
                     "like_queue",
-                    build_message_row_payload(msg),
+                    build_message_row_payload(msg, app_id=conv.app_id if conv else None),
                 )
             except Exception as exc:
                 logger.warning(
@@ -382,7 +388,7 @@ class ConversationService:
                 )
 
         return msg
-
+    
     @staticmethod
     def set_conversation_feedback(
         db: Session,

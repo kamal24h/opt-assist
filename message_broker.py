@@ -209,7 +209,10 @@ def build_message_payload(
     }
 
 
-def build_message_row_payload(msg) -> Dict[str, Any]:
+def build_message_row_payload(
+    msg,
+    app_id: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     payload کامل یک رکورد جدول messages برای صف like_queue.
     همه فیلدهای شناخته‌شده رکورد را شامل می‌شود.
@@ -218,6 +221,7 @@ def build_message_row_payload(msg) -> Dict[str, Any]:
         "event_type": "message.row.updated",
         "messages_id": str(msg.id),
         "conversation_id": str(msg.conversation_id),
+        "app_id": app_id, 
         "query": msg.query,
         "answer": msg.answer,
         "duration": msg.duration,
