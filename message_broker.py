@@ -216,13 +216,13 @@ def build_message_row_payload(msg) -> Dict[str, Any]:
     """
     return {
         "event_type": "message.row.updated",
-        "id": str(msg.id),
+        "messages_id": str(msg.id),
         "conversation_id": str(msg.conversation_id),
         "query": msg.query,
         "answer": msg.answer,
         "duration": msg.duration,
         "error": msg.error,
-        "meta_info": msg.meta_info or {},
+        #"meta_info": msg.meta_info or {},
         "liked": msg.liked,
         "created_at": msg.created_at.isoformat() if msg.created_at else None,
     }
@@ -235,7 +235,7 @@ def build_conversation_row_payload(conv) -> Dict[str, Any]:
     """
     return {
         "event_type": "conversation.feedback.updated",
-        "id": str(conv.id),
+        "conversation_id": str(conv.id),
         "app_id": conv.app_id,
         "tenant_id": conv.tenant_id,
         "user_id": conv.user_id,

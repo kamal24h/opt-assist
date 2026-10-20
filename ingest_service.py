@@ -166,6 +166,7 @@ def process_and_index_document(
         return 0
 
     base_metadata = {
+        **(metadata or {}),
         "doc_id": doc_id,                 # ردیف فعلی documents
         "logical_doc_id": logical_doc_id, # کل سند
         "doc_version": version,
@@ -173,8 +174,7 @@ def process_and_index_document(
         "content_hash": content_hash,
         "doc_name": doc_name,
         "department": department,
-        "app_id": app_id,
-        **(metadata or {}),
+        "app_id": app_id,        
     }
 
     chunks = _split_and_enrich(raw_documents, base_metadata)
@@ -213,14 +213,14 @@ def process_and_index_text_document(
 
     document = LangChainDocument(page_content=doc_text, metadata={})
     base_metadata = {
+        **(metadata or {}),
         "doc_id": doc_id,
         "logical_doc_id": logical_doc_id,
         "doc_version": version,
         "is_current": is_current,
         "content_hash": content_hash,
         "doc_name": doc_name,
-        "app_id": app_id,
-        **(metadata or {}),
+        "app_id": app_id,        
     }
 
     chunks = _split_and_enrich([document], base_metadata)

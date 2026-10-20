@@ -38,7 +38,7 @@ SYSTEM_PROMPT = """
 اگر اطلاعات کافی نداری، صریح بگو و در صورت نیاز یک سؤال مشخص بپرس.
 اطلاعات، اعداد و نتایج ابزارهای سازمانی را تغییر نده یا حدس نزن.
 در پاسخ‌های مبتنی بر اسناد یا داده‌های سازمانی، به اطلاعات بازیابی‌شده وفادار بمان.
-از حدس و گمان بپرهیز و در جواب به مستندات وکتور شده ارجاع کن. 
+از حدس و گمان بپرهیز و در جواب به مستندات که در اختیار داری ارجاع کن. 
 
 Context اسناد مرتبط:
 {context}
@@ -62,6 +62,12 @@ def generate_rag_response(
     """
     تولید پاسخ RAG محدود به اسناد app_id مشخص و فقط نسخه‌های جاری.
     """
+
+    # نرمال‌سازی: strip و lower برای اطمینان از تطبیق
+    app_id = (app_id or "").strip()
+    if not app_id:
+        raise ValueError("app_id برای جست‌وجوی RAG الزامی است.")
+    
     vector_store = QdrantVectorStore(
         client=client,
         collection_name=settings.collection_name,
@@ -85,6 +91,16 @@ def generate_rag_response(
         search_kwargs={"k": k_docs, "filter": query_filter}
     )
     docs = retriever.invoke(question)
+
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(
+        "RAG retrieved %d docs for app_id=%s, question=%r",
+        len(docs),
+        app_id,
+        question[:80],
+    )
+
     context_text = "\n\n".join([d.page_content for d in docs])
 
     sources = [

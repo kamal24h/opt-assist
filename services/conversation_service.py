@@ -39,7 +39,7 @@ class ConversationService:
     ) -> Conversation:
         conv = Conversation(
             id=uuid.uuid4(),
-            app_id=app_id,
+            app_id=app_id.strip(),   # ← جدید
             tenant_id=tenant_id,
             user_id=user_id,
             user_name=user_name,
