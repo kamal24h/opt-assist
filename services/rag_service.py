@@ -59,21 +59,26 @@ def generate_rag_response(
     chat_history: Optional[List[Tuple[str, str]]] = None,
     k_docs: int = 4,
 ) -> Tuple[str, List[Dict[str, Any]], Optional[int]]:
-    """
-    تولید پاسخ RAG محدود به اسناد app_id مشخص و فقط نسخه‌های جاری.
-    """
+    """تولید پاسخ RAG با محدودسازی نتایج به app_id و نسخه‌های جاری.
 
-    # نرمال‌سازی: strip و lower برای اطمینان از تطبیق
+    برای هر منبع، اطلاعات بازیابی‌شده از Qdrant به‌همراه متن chunk ثبت می‌شود
+    تا در meta_info.sources پیام دستیار قابل ردیابی باشد.
+    """
+    import hashlib
+    import logging
+
+    logger = logging.getLogger(__name__)
     app_id = (app_id or "").strip()
     if not app_id:
         raise ValueError("app_id برای جست‌وجوی RAG الزامی است.")
-    
+
     vector_store = QdrantVectorStore(
         client=client,
         collection_name=settings.collection_name,
         embedding=embeddings,
     )
 
+    # توجه: این مسیرها مطابق payload پیش‌فرض LangChain-Qdrant هستند.
     query_filter = Filter(
         must=[
             FieldCondition(
@@ -87,31 +92,61 @@ def generate_rag_response(
         ]
     )
 
-    retriever = vector_store.as_retriever(
-        search_kwargs={"k": k_docs, "filter": query_filter}
+    # برخلاف retriever.invoke، این متد score واقعی هر نتیجه را هم برمی‌گرداند.
+    scored_docs = vector_store.similarity_search_with_score(
+        question,
+        k=k_docs,
+        filter=query_filter,
     )
-    docs = retriever.invoke(question)
 
-    import logging
-    logger = logging.getLogger(__name__)
+    sources: List[Dict[str, Any]] = []
+    context_parts: List[str] = []
+    core_keys = {
+        "doc_id", "doc_name", "logical_doc_id", "doc_version", "app_id",
+        "chunk_id", "chunk_hash", "page", "start_index", "is_current",
+        "content_hash", "department",
+    }
+
+    for rank, item in enumerate(scored_docs, start=1):
+        doc, raw_score = item
+        md = dict(doc.metadata or {})
+        chunk_text = doc.page_content or ""
+        chunk_hash = md.get("chunk_hash") or hashlib.sha256(
+            chunk_text.encode("utf-8")
+        ).hexdigest()
+        # نسخه‌های مختلف LangChain ممکن است شناسه Qdrant را در Document.id
+        # یا metadata برگردانند؛ در نبود آن، hash محتوایی شناسه جایگزین است.
+        chunk_id = getattr(doc, "id", None) or md.get("chunk_id") or chunk_hash
+
+        context_parts.append(chunk_text)
+        extra_metadata = {key: value for key, value in md.items() if key not in core_keys}
+        source: Dict[str, Any] = {
+            "doc_id": md.get("doc_id"),
+            "doc_name": md.get("doc_name"),
+            "app_id": md.get("app_id", app_id),
+            "chunk_id": str(chunk_id),
+            "chunk_hash": str(chunk_hash),
+            "chunk_text": chunk_text,
+            "score": float(raw_score) if raw_score is not None else None,
+            "retrieval_rank": rank,
+            "metadata": extra_metadata,
+        }
+        if md.get("page") is not None:
+            source["page"] = md["page"]
+        if md.get("start_index") is not None:
+            source["start_index"] = md["start_index"]
+        # فیلدهای نسخه‌بندی برای تشخیص منبع/نسخه سند مفیدند.
+        if md.get("logical_doc_id") is not None:
+            source["logical_doc_id"] = md["logical_doc_id"]
+        if md.get("doc_version") is not None:
+            source["doc_version"] = md["doc_version"]
+        sources.append(source)
+
     logger.info(
         "RAG retrieved %d docs for app_id=%s, question=%r",
-        len(docs),
-        app_id,
-        question[:80],
+        len(scored_docs), app_id, question[:80],
     )
-
-    context_text = "\n\n".join([d.page_content for d in docs])
-
-    sources = [
-        {
-            "doc_name": d.metadata.get("doc_name"),
-            "doc_id": d.metadata.get("doc_id"),
-            "logical_doc_id": d.metadata.get("logical_doc_id"),
-            "doc_version": d.metadata.get("doc_version"),
-        }
-        for d in docs
-    ]
+    context_text = "\n\n".join(context_parts)
 
     history_messages = []
     if chat_history:
@@ -133,7 +168,6 @@ def generate_rag_response(
         temperature=0.2,
     )
     chain = prompt_template | llm | StrOutputParser()
-
     answer = chain.invoke({
         "context": context_text,
         "chat_history": history_messages,
@@ -142,5 +176,4 @@ def generate_rag_response(
 
     from services.form_resolver import resolve_form_id
     form_id = resolve_form_id(question=question, answer=answer, use_llm_fallback=True)
-
     return answer, sources, form_id

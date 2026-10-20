@@ -192,6 +192,9 @@ def process_and_index_document(
         str(uuid.uuid5(POINT_ID_NAMESPACE, f"{logical_doc_id}:{version}:chunk:{i}"))
         for i in range(len(chunks))
     ]
+    for chunk, chunk_id in zip(chunks, chunk_ids):
+        chunk.metadata["chunk_id"] = chunk_id
+        chunk.metadata["chunk_hash"] = compute_content_hash(chunk.page_content or "")
 
     _add_documents_in_batches(vector_store, chunks, chunk_ids)
     return len(chunks)
@@ -233,6 +236,9 @@ def process_and_index_text_document(
         str(uuid.uuid5(POINT_ID_NAMESPACE, f"{logical_doc_id}:{version}:chunk:{i}"))
         for i in range(len(chunks))
     ]
+    for chunk, chunk_id in zip(chunks, chunk_ids):
+        chunk.metadata["chunk_id"] = chunk_id
+        chunk.metadata["chunk_hash"] = compute_content_hash(chunk.page_content or "")
 
     _add_documents_in_batches(vector_store, chunks, chunk_ids)
     return len(chunks)
@@ -300,7 +306,7 @@ def mark_version_not_current(logical_doc_id: str, version: int) -> None:
     client.set_payload(
         collection_name=settings.collection_name,
         payload={"is_current": False},
-        #key="metadata",
+        key="metadata",
         points_selector=Filter(
             must=[
                 FieldCondition(
@@ -324,7 +330,7 @@ def mark_version_current(logical_doc_id: str, version: int) -> None:
     client.set_payload(
         collection_name=settings.collection_name,
         payload={"is_current": True},
-        #key="metadata",
+        key="metadata",
         points_selector=Filter(
             must=[
                 FieldCondition(

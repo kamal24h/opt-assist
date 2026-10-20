@@ -363,7 +363,7 @@ class ConversationService:
         msg = db.query(Message).filter(Message.id == message_id).first()
         if not msg:
             return None
-        msg.like = like_value
+        msg.liked = like_value
         db.commit()
         db.refresh(msg)
 

@@ -84,7 +84,7 @@ def send_message(
             answer=answer,
             duration=duration,
             error=None,
-            meta_info={"sources": sources, "status": "completed", "formId": form_id},
+            meta_info={"sources": sources or [], "status": "completed", "formId": form_id},
         )
         return completed
 

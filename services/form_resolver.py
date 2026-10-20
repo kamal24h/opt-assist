@@ -167,7 +167,7 @@ def resolve_form_id(
     ۲. اگر answer داده شد، قطعی بر اساس answer
     ۳. اگر use_llm_fallback، با LLM
     """
-    fid = resolve_form_id_simple(question)
+    fid = resolve_form_id_simple(question)    
     if fid is not None:
         return fid
 
@@ -176,7 +176,13 @@ def resolve_form_id(
         if fid is not None:
             return fid
 
+    # ← فیلتر سبک قبل از LLM
     if use_llm_fallback:
+        # اگر query خیلی کوتاه است، احتمالاً نامرتبط است
+        if len(_normalize(question)) < 4:
+            return None
+        # یا: فقط اگر حداقل یک کلمه از عناوین در query باشد
+    
         # LLM فقط وقتی صدا زده می‌شود که تطبیق قطعی شکست خورده باشد
         # برای جلوگیری از overhead، LLM سبک (همان مدل پاسخ) استفاده می‌شود
         from langchain_ollama import ChatOllama
