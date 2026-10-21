@@ -58,6 +58,13 @@ SYSTEM_PROMPT = """
 
 11. **اگر درخواستی برای تولید داده یا ایجاد اطلاعات جدید داشتی، بگو که فعلاً ابزاری برای این کار در دسترس نداری**.
 
+## استفاده از تاریخچه مکالمه
+
+تاریخچه مکالمه ممکن است پیام‌هایی با پیشوند [پاسخ تأییدشده توسط کاربر] داشته باشد.
+این پیشوند یعنی کاربر آن پاسخ را پسندیده است. در صورت تشابه موضوعی، از سبک و ساختار
+این پاسخ‌ها الگو بگیر، ولی محتوای واقعی را همیشه از Context اسناد بازیابی‌شده بگیر، نه از تاریخچه.
+پاسخ‌هایی که کاربر آن‌ها را نپسندیده (liked=False) از تاریخچه حذف شده‌اند؛ بنابراین
+در تاریخچه وجود ندارند. وجود یا نبود آن‌ها را استنباط نکن.
 
 فرمت پاسخ:
 پاسخ را بدون هیچ فرمت Markdown بده.
@@ -82,8 +89,6 @@ def _get_reranker():
     بارگذاری تنبل (lazy) مدل Cross-Encoder برای Reranking.
     اگر بارگذاری شکست بخورد، None برمی‌گردد و RAG بدون rerank کار می‌کند.
     """
-    
-
     # import داخل تابع تا در صورت نبود پکیج، سرویس بالا بیاید
     try:
         from langchain_community.cross_encoders import HuggingFaceCrossEncoder
@@ -100,7 +105,6 @@ def _get_reranker():
         logger.info("Loading reranker model: BAAI/bge-reranker-v2-m3")
         cross_encoder = HuggingFaceCrossEncoder(
             model_name="BAAI/bge-reranker-v2-m3"
-            #model_kwargs={"device": "cuda"}
         )
         reranker = CrossEncoderReranker(model=cross_encoder, top_n=5)
         logger.info("Reranker model loaded successfully.")
@@ -160,7 +164,6 @@ def generate_rag_response(
     در هر مرحله، اطلاعات بازیابی‌شده (شامل chunk_text و score اولیه Qdrant)
     در meta_info.sources پیام دستیار قابل ردیابی است.
     """
-    
     app_id = (app_id or "").strip()
     if not app_id:
         raise ValueError("app_id برای جست‌وجوی RAG الزامی است.")
