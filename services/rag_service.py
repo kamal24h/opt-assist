@@ -100,6 +100,7 @@ def _get_reranker():
         logger.info("Loading reranker model: BAAI/bge-reranker-v2-m3")
         cross_encoder = HuggingFaceCrossEncoder(
             model_name="BAAI/bge-reranker-v2-m3"
+            #model_kwargs={"device": "cuda"}
         )
         reranker = CrossEncoderReranker(model=cross_encoder, top_n=5)
         logger.info("Reranker model loaded successfully.")

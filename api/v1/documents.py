@@ -166,6 +166,11 @@ def create_document_file(
             detail=f"نوع فایل غیرمجاز است. تنها فرمت‌های {allowed_types} پذیرفته می‌شوند.",
         )
 
+    # کنترل یکسانی سیستمی که از دستیار استفاده می کند.
+    appId = appId.strip()
+    if not appId:
+        raise HTTPException(status_code=400, detail="appId الزامی است.")
+
     parsed_metadata: Dict[str, Any] = {}
     if metadata:
         try:
@@ -208,8 +213,7 @@ def create_document_file(
             logical_doc_id = current.logical_doc_id
             new_version = current.version + 1
             previous_version_id = current.id
-            _demote_current(db, current)
-            mark_version_not_current(str(logical_doc_id), current.version)
+            # نسخه قبلی تا موفقیت کامل indexing نسخه جدید، جاری می‌ماند.
         else:
             logical_doc_id = uuid.uuid4()
             new_version = 1
@@ -248,7 +252,10 @@ def create_document_file(
                 detail=f"خطا در پردازش فایل: {str(e)}",
             )
 
-        # ۴. ثبت ردیف جدید
+        # ۴. ثبت ردیف جدید؛ نسخه قبلی فقط اکنون و پس از موفقیت Qdrant demote می‌شود.
+        if current is not None:
+            current.is_current = False
+
         new_doc = Document(
             id=doc_id,
             logical_doc_id=logical_doc_id,
@@ -282,6 +289,15 @@ def create_document_file(
                 detail=f"خطا در ثبت سند: {str(e)}",
             )
 
+        if current is not None:
+            try:
+                mark_version_not_current(str(logical_doc_id), new_version - 1)
+            except Exception:
+                logger.exception(
+                    "Post-commit Qdrant demotion failed logical_doc_id=%s old_version=%s",
+                    logical_doc_id, new_version - 1,
+                )
+
         return {
             "status": "success",
             "documentId": str(doc_id),
@@ -297,143 +313,127 @@ def create_document_file(
             os.remove(temp_file_path)
 
 
+
 @router.post("/create-text", status_code=status.HTTP_200_OK)
 def create_text_documents_replace(
     request: TextDocumentsRequest,
     db: Session = Depends(get_db),
 ):
     """
-    جایگزینی کامل اسناد متنی یک app_id.
+    جایگزینی کامل اسناد متنی یک app_id، با حفظ داده‌های قبلی تا زمان
+    موفقیت کامل ایندکس‌گذاری اسناد جدید.
 
-    رفتار:
-    - همه ردیف‌های جدول documents با این app_id حذف می‌شوند.
-    - همه وکتورهای همان app_id از Qdrant حذف می‌شوند.
-    - لیست اسناد جدید از صفر با version=1 ذخیره می‌شوند.
-    - در صورت خطا، تلاش می‌شود وکتورهای نوشته‌شده در این درخواست پاک شوند
-      و تراکنش Postgres rollback شود.
-
-    تفاوت با create-text:
-    - create-text نسخه‌بندی می‌کند و نسخه قبلی را demote می‌کند.
-    - create-text2 همه چیز را حذف و از نو می‌سازد.
+    این endpoint عمداً semantics جایگزینی کامل را حفظ می‌کند:
+    اگر حتی یک سند نامعتبر یا ایندکس‌گذاری آن ناموفق باشد، اسناد قبلی حذف
+    نمی‌شوند و Vectorهای نوشته‌شده در این درخواست پاک‌سازی می‌شوند.
+    برای Upsert و versioning مستقل هر سند از /create-text2 استفاده شود.
     """
-    if not request.app_id.strip():
+    app_id = request.app_id.strip()
+    if not app_id:
         raise HTTPException(status_code=400, detail="app_id الزامی است.")
     if not request.documents:
-        raise HTTPException(
-            status_code=400, detail="حداقل یک سند متنی باید ارسال شود."
-        )
+        raise HTTPException(status_code=400, detail="حداقل یک سند متنی باید ارسال شود.")
 
-    app_id = request.app_id.strip()
-    created: List[CreatedDocumentItem] = []
+    # نام سند در یک batch جایگزینی باید یکتا باشد تا هویت اسناد مبهم نشود.
+    names = [item.doc_name.strip() for item in request.documents]
+    if any(not name for name in names):
+        raise HTTPException(status_code=400, detail="doc_name برای تمام اسناد الزامی است.")
+    if len(set(names)) != len(names):
+        raise HTTPException(status_code=400, detail="در یک درخواست، doc_name تکراری مجاز نیست.")
+    if any(not (item.doc or "").strip() for item in request.documents):
+        raise HTTPException(status_code=400, detail="متن سند نمی‌تواند خالی باشد.")
 
-    # لیست جبران برای پاک‌سازی Qdrant در صورت خطا
-    written_vectors: List[tuple] = []
-
-    # شمارنده حذف‌شده‌ها برای گزارش
-    deleted_docs_count = 0
-
+    staged: List[tuple] = []
     try:
-        # ---------- مرحله ۱: پاک‌سازی کامل app_id ----------
-        # ۱.۱ حذف از Qdrant
-        try:
-            delete_document_vectors_by_app_id(app_id)
-        except Exception as exc:
-            logger.warning(
-                "Failed to delete Qdrant vectors for app_id=%s: %s",
-                app_id,
-                exc,
-            )
-            raise HTTPException(
-                status_code=500,
-                detail=f"خطا در حذف وکتورهای قبلی از Qdrant: {str(exc)}",
-            )
-
-        # ۱.۲ حذف از Postgres
-        existing_docs = (
-            db.query(Document).filter(Document.app_id == app_id).all()
-        )
-        deleted_docs_count = len(existing_docs)
-        for d in existing_docs:
-            db.delete(d)
-        # flush تا حذف‌ها در کوئری‌های بعدی همین تراکنش دیده شوند
-        db.flush()
-
-        # ---------- مرحله ۲: درج اسناد جدید با version=1 ----------
+        # ابتدا تمام اسناد جدید را با شناسه‌های مستقل ایندکس می‌کنیم.
+        # تا این مرحله هیچ سند/Vector قدیمی حذف یا تغییر وضعیت داده نمی‌شود.
         for item in request.documents:
-            text = item.doc or ""
-            content_hash = compute_content_hash(text)
-
-            logical_doc_id = uuid.uuid4()
-            new_version = 1
             doc_id = uuid.uuid4()
-
+            logical_doc_id = uuid.uuid4()
+            content_hash = compute_content_hash(item.doc)
             meta = dict(item.metadata or {})
             if request.version:
                 meta["version"] = request.version
             meta["source_type"] = "text"
 
+            # اگر پردازش وسط batch شکست بخورد، doc_id از قبل ثبت شده است
+            # تا پاک‌سازی، chunkهای نیمه‌نوشته را هم پوشش دهد.
+            staged.append((str(doc_id), str(logical_doc_id), 1, item, content_hash, meta))
             chunks_count = process_and_index_text_document(
-                doc_text=text,
+                doc_text=item.doc,
                 doc_id=str(doc_id),
                 logical_doc_id=str(logical_doc_id),
-                version=new_version,
+                version=1,
                 content_hash=content_hash,
                 is_current=True,
-                doc_name=item.doc_name,
+                doc_name=item.doc_name.strip(),
                 app_id=app_id,
                 metadata=meta,
             )
+            if chunks_count <= 0:
+                raise ValueError(f"سند '{item.doc_name}' هیچ chunk قابل ایندکسی تولید نکرد.")
+            staged[-1] = (str(doc_id), str(logical_doc_id), 1, item, content_hash, meta, chunks_count)
 
-            if chunks_count > 0:
-                written_vectors.append(
-                    (str(doc_id), str(logical_doc_id), new_version)
-                )
+        # پس از موفقیت تمام ایندکس‌گذاری‌ها، تراکنش DB را آماده می‌کنیم.
+        existing_docs = db.query(Document).filter(Document.app_id == app_id).all()
+        old_doc_ids = [str(doc.id) for doc in existing_docs]
+        deleted_docs_count = len(existing_docs)
+        for doc in existing_docs:
+            db.delete(doc)
+        db.flush()
 
-            new_doc = Document(
+        result_items = []
+        for entry in staged:
+            doc_id_s, logical_id_s, version, item, content_hash, meta, chunks_count = entry
+            doc_id = uuid.UUID(doc_id_s)
+            logical_id = uuid.UUID(logical_id_s)
+            db.add(Document(
                 id=doc_id,
-                logical_doc_id=logical_doc_id,
-                version=new_version,
+                logical_doc_id=logical_id,
+                version=version,
                 is_current=True,
                 previous_version_id=None,
                 content_hash=content_hash,
-                doc_name=item.doc_name,
+                doc_name=item.doc_name.strip(),
                 doc_type="text",
-                department="",
+                department=(meta.get("department") or ""),
                 app_id=app_id,
                 meta_info=meta,
                 chunks_count=chunks_count,
-            )
-            db.add(new_doc)
-            db.flush()
-
-            created.append(
-                _created_item(
-                    doc_id=doc_id,
-                    logical_doc_id=logical_doc_id,
-                    version=new_version,
-                    doc_name=item.doc_name,
-                    chunks_count=chunks_count,
-                )
-            )
+            ))
+            result_items.append(_created_item(
+                doc_id=doc_id,
+                logical_doc_id=logical_id,
+                version=version,
+                doc_name=item.doc_name.strip(),
+                chunks_count=chunks_count,
+            ))
 
         db.commit()
+        # فقط Vectorهای اسناد قدیمی را پاک می‌کنیم؛ حذف بر اساس app_id در اینجا
+        # اشتباه است چون Vectorهای جدید نیز app_id یکسان دارند.
+        for old_doc_id in old_doc_ids:
+            try:
+                delete_document_vectors_by_doc_id(old_doc_id)
+            except Exception:
+                # DB و اسناد جدید commit شده‌اند؛ خطا باید قابل مشاهده باشد
+                # و نباید باعث حذف/rollback نسخه‌های جدید شود.
+                logger.exception("Old Qdrant vector cleanup failed app_id=%s old_doc_id=%s", app_id, old_doc_id)
         return {
             "status": "success",
             "appId": app_id,
             "deletedDocumentsCount": deleted_docs_count,
-            "documents": [c.model_dump() for c in created],
+            "documents": [item.model_dump() for item in result_items],
         }
-
     except HTTPException:
         db.rollback()
-        _compensate_qdrant(written_vectors)
+        _compensate_qdrant([(x[0], x[1], x[2]) for x in staged])
         raise
-    except Exception as e:
+    except Exception as exc:
         db.rollback()
-        _compensate_qdrant(written_vectors)
-        raise HTTPException(
-            status_code=500, detail=f"خطا در جایگزینی اسناد: {str(e)}"
-        )
+        _compensate_qdrant([(x[0], x[1], x[2]) for x in staged])
+        logger.exception("Text document replacement failed app_id=%s", app_id)
+        raise HTTPException(status_code=500, detail=f"خطا در جایگزینی اسناد: {str(exc)}")
 
 
 @router.post("/create-text2", status_code=status.HTTP_200_OK)
@@ -441,57 +441,80 @@ def create_text_documents(
     request: TextDocumentsRequest,
     db: Session = Depends(get_db),
 ):
-    if not request.app_id.strip():
+    """
+    Upsert نسخه‌بندی‌شده اسناد متنی؛ هر سند مستقل commit/rollback می‌شود.
+    شکست یک سند مانع پردازش سایر اسناد نمی‌شود.
+    """
+    app_id = request.app_id.strip()
+    if not app_id:
         raise HTTPException(status_code=400, detail="app_id الزامی است.")
     if not request.documents:
-        raise HTTPException(
-            status_code=400, detail="حداقل یک سند متنی باید ارسال شود."
-        )
+        raise HTTPException(status_code=400, detail="حداقل یک سند متنی باید ارسال شود.")
 
-    app_id = request.app_id.strip()
-    created: List[CreatedDocumentItem] = []
+    results: List[Dict[str, Any]] = []
+    seen_names = set()
 
-    # لیست جبران برای پاک‌سازی Qdrant در صورت خطا
-    # هر آیتم: (doc_id, logical_doc_id, version)
-    written_vectors: List[tuple] = []
+    for item in request.documents:
+        doc_name = (item.doc_name or "").strip()
+        if not doc_name:
+            results.append({
+                "docName": item.doc_name,
+                "status": "failed",
+                "error": "doc_name الزامی است.",
+            })
+            continue
+        if doc_name in seen_names:
+            results.append({
+                "docName": doc_name,
+                "status": "failed",
+                "error": "doc_name در همین batch تکراری است.",
+            })
+            continue
+        seen_names.add(doc_name)
 
-    try:
-        for item in request.documents:
-            text = item.doc or ""
+        text = item.doc or ""
+        if not text.strip():
+            results.append({"docName": doc_name, "status": "failed", "error": "متن سند نمی‌تواند خالی باشد."})
+            continue
+
+        doc_id = uuid.uuid4()
+        logical_doc_id = None
+        new_version = 1
+        current = None
+        vectors_may_exist = False
+
+        try:
             content_hash = compute_content_hash(text)
+            current = _find_current_document(db, app_id, doc_name)
 
-            current = _find_current_document(db, app_id, item.doc_name)
             if current is not None and current.content_hash == content_hash:
-                created.append(
-                    CreatedDocumentItem(
-                        logicalDocId=str(current.logical_doc_id),
-                        version=current.version,
-                        docName=item.doc_name,
-                        chunksCreated=0,
-                        status="skipped",
-                        reason="content unchanged",
-                    )
-                )
+                results.append({
+                    "documentId": str(current.id),
+                    "logicalDocId": str(current.logical_doc_id),
+                    "version": current.version,
+                    "docName": doc_name,
+                    "chunksCreated": 0,
+                    "status": "skipped",
+                    "reason": "content unchanged",
+                })
                 continue
 
             if current is not None:
                 logical_doc_id = current.logical_doc_id
                 new_version = current.version + 1
                 previous_version_id = current.id
-                _demote_current(db, current)
-                mark_version_not_current(str(logical_doc_id), current.version)
             else:
                 logical_doc_id = uuid.uuid4()
-                new_version = 1
                 previous_version_id = None
-
-            doc_id = uuid.uuid4()
 
             meta = dict(item.metadata or {})
             if request.version:
                 meta["version"] = request.version
             meta["source_type"] = "text"
 
+            # قبل از فراخوانی، شناسه جدید معلوم است؛ اگر embedding یا upsert
+            # وسط کار شکست بخورد، پاک‌سازی با doc_id همه chunkهای نیمه‌نوشته را می‌گیرد.
+            vectors_may_exist = True
             chunks_count = process_and_index_text_document(
                 doc_text=text,
                 doc_id=str(doc_id),
@@ -499,63 +522,81 @@ def create_text_documents(
                 version=new_version,
                 content_hash=content_hash,
                 is_current=True,
-                doc_name=item.doc_name,
+                doc_name=doc_name,
                 app_id=app_id,
                 metadata=meta,
             )
+            if chunks_count <= 0:
+                raise ValueError("سند هیچ chunk قابل ایندکسی تولید نکرد.")
 
-            # ثبت برای جبران (فقط اگر واقعاً چیزی نوشته شد)
-            if chunks_count > 0:
-                written_vectors.append(
-                    (str(doc_id), str(logical_doc_id), new_version)
-                )
+            # سند قبلی فقط در تراکنش همان سند demote می‌شود؛ تا قبل از موفقیت
+            # ایندکس‌گذاری، نسخه قبلی در DB و Qdrant دست‌نخورده باقی می‌ماند.
+            if current is not None:
+                current.is_current = False
 
-            new_doc = Document(
+            db.add(Document(
                 id=doc_id,
                 logical_doc_id=logical_doc_id,
                 version=new_version,
                 is_current=True,
                 previous_version_id=previous_version_id,
                 content_hash=content_hash,
-                doc_name=item.doc_name,
+                doc_name=doc_name,
                 doc_type="text",
-                department="",
+                department=(meta.get("department") or ""),
                 app_id=app_id,
                 meta_info=meta,
                 chunks_count=chunks_count,
-            )
-            db.add(new_doc)
-            # flush تا _find_current_document در تکرار بعدی این ردیف را ببیند
-            # (مشکل چند سند هم‌نام در یک درخواست)
-            db.flush()
+            ))
+            db.commit()
 
-            created.append(
-                _created_item(
-                    doc_id=doc_id,
-                    logical_doc_id=logical_doc_id,
-                    version=new_version,
-                    doc_name=item.doc_name,
-                    chunks_count=chunks_count,
-                )
-            )
+            # PostgreSQL commit شده؛ اکنون نسخه قبلی در Qdrant را demote می‌کنیم.
+            # اگر این مرحله شکست بخورد، نسخه DB همچنان معتبر است و خطا ثبت می‌شود
+            # تا ناسازگاری Qdrant بدون پاک‌کردن نسخه جدید قابل پیگیری باشد.
+            if current is not None:
+                try:
+                    mark_version_not_current(str(logical_doc_id), current.version)
+                except Exception:
+                    logger.exception(
+                        "Post-commit Qdrant demotion failed app_id=%s logical_doc_id=%s old_version=%s",
+                        app_id, logical_doc_id, current.version,
+                    )
 
-        db.commit()
-        return {
-            "status": "success",
-            "appId": app_id,
-            "documents": [c.model_dump() for c in created],
-        }
+            results.append({
+                "documentId": str(doc_id),
+                "logicalDocId": str(logical_doc_id),
+                "version": new_version,
+                "docName": doc_name,
+                "chunksCreated": chunks_count,
+                "status": "created" if current is None else "updated",
+            })
 
-    except HTTPException:
-        db.rollback()
-        _compensate_qdrant(written_vectors)
-        raise
-    except Exception as e:
-        db.rollback()
-        _compensate_qdrant(written_vectors)
-        raise HTTPException(
-            status_code=500, detail=f"خطا در ذخیره متن: {str(e)}"
-        )
+        except Exception as exc:
+            db.rollback()
+            if vectors_may_exist:
+                try:
+                    delete_document_vectors_by_doc_id(str(doc_id))
+                except Exception:
+                    logger.exception("Failed to compensate staged Qdrant vectors doc_id=%s", doc_id)
+            logger.exception("Text document upsert failed app_id=%s doc_name=%s", app_id, doc_name)
+            results.append({
+                "docName": doc_name,
+                "status": "failed",
+                "error": str(exc),
+            })
+
+    counts = {
+        "created": sum(1 for r in results if r["status"] == "created"),
+        "updated": sum(1 for r in results if r["status"] == "updated"),
+        "skipped": sum(1 for r in results if r["status"] == "skipped"),
+        "failed": sum(1 for r in results if r["status"] == "failed"),
+    }
+    return {
+        "status": "completed" if counts["failed"] == 0 else ("partial" if any(counts[k] for k in ("created", "updated", "skipped")) else "failed"),
+        "appId": app_id,
+        "summary": counts,
+        "documents": results,
+    }
 
 
 @router.get(

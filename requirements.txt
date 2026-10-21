@@ -25,5 +25,6 @@ sqlalchemy
 psycopg[binary]
 
 # for Reranking
+langchain_classic
 langchain-huggingface
 sentence-transformers
