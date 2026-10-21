@@ -8,3 +8,6 @@ venv
 docs/
 
 
+*.zip
+*.rar
+opt-assist.rar
