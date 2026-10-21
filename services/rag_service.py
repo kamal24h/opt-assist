@@ -11,6 +11,12 @@ from qdrant_client.http.models import Filter, FieldCondition, MatchValue
 
 from config import settings
 
+import hashlib
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 client = QdrantClient(
     url=settings.qdrant_url,
     api_key=settings.qdrant_api_key or None,
@@ -71,54 +77,89 @@ Context اسناد مرتبط:
 """
 
 
-# SYSTEM_PROMPT = """
-# تو یک دستیار هوشمند فارسی‌زبان برای کاربران سازمانی هستی.
+def _get_reranker():
+    """
+    بارگذاری تنبل (lazy) مدل Cross-Encoder برای Reranking.
+    اگر بارگذاری شکست بخورد، None برمی‌گردد و RAG بدون rerank کار می‌کند.
+    """
+    
 
-# فرمت پاسخ:
-# لطفاً پاسخ را بدون هیچ فرمت Markdown بده.
-# از ** ، ## ، ```، لیست با - یا * استفاده نکن.
-# فقط متن ساده با Enter بین خطوط.
+    # import داخل تابع تا در صورت نبود پکیج، سرویس بالا بیاید
+    try:
+        from langchain_community.cross_encoders import HuggingFaceCrossEncoder
+        from langchain_classic.retrievers.document_compressors import (
+            CrossEncoderReranker,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Reranker packages not available, skipping rerank: %s", exc
+        )
+        return None
 
-# سبک مکالمه:
-# به فارسی طبیعی، روان، امروزی و حرفه‌ای پاسخ بده.
-# لحن تو دوستانه و محترمانه باشد؛ نه بیش از حد رسمی و نه بیش از حد خودمانی.
-# از جمله‌بندی ترجمه‌وار، عبارت‌های کلیشه‌ای و تکرار بی‌مورد سؤال کاربر پرهیز کن.
-# پاسخ را مستقیم شروع کن و از مقدمه‌های غیرضروری دوری کن.
-# برای سؤال ساده، پاسخ کوتاه و روشن بده.
-# برای مسئله پیچیده، پاسخ را مرحله‌به‌مرحله و با ساختار مناسب ارائه کن.
-# اگر اطلاعات کافی نداری، صریح بگو و در صورت نیاز یک سؤال مشخص بپرس.
-# اطلاعات، اعداد و نتایج ابزارهای سازمانی را تغییر نده یا حدس نزن.
-# در پاسخ‌های مبتنی بر اسناد یا داده‌های سازمانی، به اطلاعات بازیابی‌شده وفادار بمان.
-# از حدس و گمان بپرهیز و در جواب به مستندات که در اختیار داری ارجاع کن. 
+    try:
+        logger.info("Loading reranker model: BAAI/bge-reranker-v2-m3")
+        cross_encoder = HuggingFaceCrossEncoder(
+            model_name="BAAI/bge-reranker-v2-m3"
+        )
+        reranker = CrossEncoderReranker(model=cross_encoder, top_n=5)
+        logger.info("Reranker model loaded successfully.")
+        return reranker
+    except Exception as exc:
+        logger.warning("Failed to load reranker model: %s", exc)
+        return None
 
-# Context اسناد مرتبط:
-# {context}
-# """
 
-# SYSTEM_PROMPT = """
-# تو یک دستیار هوشمند فارسی‌زبان برای سیستم‌های سازمانی و مستندات محصول هستی.
-# به فارسی طبیعی، روان، دقیق و بدون مقدمه‌های اضافی پاسخ بده.
-# تنها با استناد به محتوای بازیابی‌شده پاسخ بده. اگر پاسخ در اسناد نیست صریحاً بگو اطلاعات کافی نداری.
+# یک نمونه سراسری؛ اولین بار در اولین درخواست ساخته می‌شود
+_RERANKER = None
+_RERANKER_INITIALIZED = False
 
-# Context:
-# {context}
-# """
+
+def _ensure_reranker():
+    global _RERANKER, _RERANKER_INITIALIZED
+    if not _RERANKER_INITIALIZED:
+        _RERANKER = _get_reranker()
+        _RERANKER_INITIALIZED = True
+    return _RERANKER
+
+
+def _rerank_documents(question: str, docs: List[Any], logger) -> List[Any]:
+    """
+    Rerank کردن اسناد بر اساس ارتباط با question.
+    در صورت خطا یا نبود مدل، لیست اصلی برگردانده می‌شود.
+    """
+    reranker = _ensure_reranker()
+    if reranker is None or not docs:
+        return docs
+    try:
+        reranked = reranker.compress_documents(docs, question)
+        logger.info(
+            "Rerank: %d docs -> %d docs", len(docs), len(reranked)
+        )
+        return reranked
+    except Exception as exc:
+        logger.warning("Rerank failed, falling back to original order: %s", exc)
+        return docs
+
 
 def generate_rag_response(
     question: str,
     app_id: str,
     chat_history: Optional[List[Tuple[str, str]]] = None,
-    k_docs: int = 4,
+    k_docs: int = 15,
+    final_k: int = 5,
 ) -> Tuple[str, List[Dict[str, Any]], Optional[int]]:
     """تولید پاسخ RAG با محدودسازی نتایج به app_id و نسخه‌های جاری.
 
-    برای هر منبع، اطلاعات بازیابی‌شده از Qdrant به‌همراه متن chunk ثبت می‌شود
-    تا در meta_info.sources پیام دستیار قابل ردیابی باشد.
-    """
-    import hashlib
-    import logging
+    Pipeline:
+      1. retrieval اولیه با k_docs (پیش‌فرض 15)
+      2. rerank با CrossEncoder و کاهش به final_k (پیش‌فرض 5)
+      3. ساخت context از top final_k
+      4. LLM
 
-    logger = logging.getLogger(__name__)
+    در هر مرحله، اطلاعات بازیابی‌شده (شامل chunk_text و score اولیه Qdrant)
+    در meta_info.sources پیام دستیار قابل ردیابی است.
+    """
+    
     app_id = (app_id or "").strip()
     if not app_id:
         raise ValueError("app_id برای جست‌وجوی RAG الزامی است.")
@@ -129,7 +170,6 @@ def generate_rag_response(
         embedding=embeddings,
     )
 
-    # توجه: این مسیرها مطابق payload پیش‌فرض LangChain-Qdrant هستند.
     query_filter = Filter(
         must=[
             FieldCondition(
@@ -143,13 +183,39 @@ def generate_rag_response(
         ]
     )
 
-    # برخلاف retriever.invoke، این متد score واقعی هر نتیجه را هم برمی‌گرداند.
+    # ۱. retrieval اولیه با k بزرگ‌تر
     scored_docs = vector_store.similarity_search_with_score(
         question,
         k=k_docs,
         filter=query_filter,
     )
 
+    # ۲. نگه‌داشتن score اولیه Qdrant برای هر chunk بر اساس شناسه
+    # تا بعد از rerank هم بتوانیم score اصلی را در sources نشان دهیم.
+    score_by_chunk_id: Dict[str, float] = {}
+    raw_docs: List[Any] = []
+    for doc, raw_score in scored_docs:
+        md = dict(doc.metadata or {})
+        chunk_text = doc.page_content or ""
+        chunk_id = (
+            getattr(doc, "id", None)
+            or md.get("chunk_id")
+            or hashlib.sha256(chunk_text.encode("utf-8")).hexdigest()
+        )
+        score_by_chunk_id[str(chunk_id)] = (
+            float(raw_score) if raw_score is not None else None
+        )
+        raw_docs.append(doc)
+
+    # ۳. rerank و کاهش تعداد
+    reranked_docs = _rerank_documents(question, raw_docs, logger)
+
+    # اگر reranker در دسترس نبود یا خطا داد، برای جلوگیری از ارسال ۱۵ سند
+    # به LLM، به final_k کاهش می‌دهیم.
+    if len(reranked_docs) > final_k:
+        reranked_docs = reranked_docs[:final_k]
+
+    # ۴. ساخت sources و context از اسناد rerank‌شده
     sources: List[Dict[str, Any]] = []
     context_parts: List[str] = []
     core_keys = {
@@ -158,19 +224,25 @@ def generate_rag_response(
         "content_hash", "department",
     }
 
-    for rank, item in enumerate(scored_docs, start=1):
-        doc, raw_score = item
+    for rank, doc in enumerate(reranked_docs, start=1):
         md = dict(doc.metadata or {})
         chunk_text = doc.page_content or ""
         chunk_hash = md.get("chunk_hash") or hashlib.sha256(
             chunk_text.encode("utf-8")
         ).hexdigest()
-        # نسخه‌های مختلف LangChain ممکن است شناسه Qdrant را در Document.id
-        # یا metadata برگردانند؛ در نبود آن، hash محتوایی شناسه جایگزین است.
-        chunk_id = getattr(doc, "id", None) or md.get("chunk_id") or chunk_hash
+        chunk_id = (
+            getattr(doc, "id", None)
+            or md.get("chunk_id")
+            or chunk_hash
+        )
+
+        # score اولیه Qdrant را از نگاشت پیدا می‌کنیم
+        qdrant_score = score_by_chunk_id.get(str(chunk_id))
 
         context_parts.append(chunk_text)
-        extra_metadata = {key: value for key, value in md.items() if key not in core_keys}
+        extra_metadata = {
+            key: value for key, value in md.items() if key not in core_keys
+        }
         source: Dict[str, Any] = {
             "doc_id": md.get("doc_id"),
             "doc_name": md.get("doc_name"),
@@ -178,7 +250,7 @@ def generate_rag_response(
             "chunk_id": str(chunk_id),
             "chunk_hash": str(chunk_hash),
             "chunk_text": chunk_text,
-            "score": float(raw_score) if raw_score is not None else None,
+            "score": qdrant_score,
             "retrieval_rank": rank,
             "metadata": extra_metadata,
         }
@@ -186,7 +258,6 @@ def generate_rag_response(
             source["page"] = md["page"]
         if md.get("start_index") is not None:
             source["start_index"] = md["start_index"]
-        # فیلدهای نسخه‌بندی برای تشخیص منبع/نسخه سند مفیدند.
         if md.get("logical_doc_id") is not None:
             source["logical_doc_id"] = md["logical_doc_id"]
         if md.get("doc_version") is not None:
@@ -194,9 +265,10 @@ def generate_rag_response(
         sources.append(source)
 
     logger.info(
-        "RAG retrieved %d docs for app_id=%s, question=%r",
-        len(scored_docs), app_id, question[:80],
+        "RAG final: %d docs (initial k=%d) for app_id=%s, question=%r",
+        len(reranked_docs), k_docs, app_id, question[:80],
     )
+
     context_text = "\n\n".join(context_parts)
 
     history_messages = []
@@ -226,5 +298,7 @@ def generate_rag_response(
     })
 
     from services.form_resolver import resolve_form_id
-    form_id = resolve_form_id(question=question, answer=answer, use_llm_fallback=True)
+    form_id = resolve_form_id(
+        question=question, answer=answer, use_llm_fallback=True
+    )
     return answer, sources, form_id

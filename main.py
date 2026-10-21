@@ -6,17 +6,22 @@ from security import require_api_key
 from database import (Base, engine)
 from api.v1.conversations import router as conversations_router
 from api.v1.messages import router as messages_router
-
-# نسخه تمیز قبلی Document API
 from api.v1.documents import router as documents_router
 
-
+# بارگذاری اولیه مدل reranker برای بهبود نتایج جستجو
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    Base.metadata.create_all(bind=engine)
 
-    Base.metadata.create_all(
-        bind=engine
-    )
+    # preload reranker
+    try:
+        from services.rag_service import _ensure_reranker
+        _ensure_reranker()
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning(
+            "Reranker preload failed: %s", exc
+        )
 
     yield
 

@@ -23,3 +23,7 @@ pika
 
 sqlalchemy
 psycopg[binary]
+
+# for Reranking
+langchain-huggingface
+sentence-transformers
