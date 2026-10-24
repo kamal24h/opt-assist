@@ -8,6 +8,7 @@ from api.v1.conversations import router as conversations_router
 from api.v1.messages import router as messages_router
 from api.v1.documents import router as documents_router
 
+
 # بارگذاری اولیه مدل reranker برای بهبود نتایج جستجو
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -15,7 +16,7 @@ async def lifespan(app: FastAPI):
 
     # preload reranker
     try:
-        from services.rag_service import _ensure_reranker
+        from services.reranker_service import _ensure_reranker
         _ensure_reranker()
     except Exception as exc:
         import logging

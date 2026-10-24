@@ -10,6 +10,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.http.models import Filter, FieldCondition, MatchValue
 
 from config import settings
+from services.reranker_service import rerank_documents  # ← Reranker از سرویس مستقل
 
 import hashlib
 import logging
@@ -84,68 +85,6 @@ Context اسناد مرتبط:
 """
 
 
-def _get_reranker():
-    """
-    بارگذاری تنبل (lazy) مدل Cross-Encoder برای Reranking.
-    اگر بارگذاری شکست بخورد، None برمی‌گردد و RAG بدون rerank کار می‌کند.
-    """
-    # import داخل تابع تا در صورت نبود پکیج، سرویس بالا بیاید
-    try:
-        from langchain_community.cross_encoders import HuggingFaceCrossEncoder
-        from langchain_classic.retrievers.document_compressors import (
-            CrossEncoderReranker,
-        )
-    except Exception as exc:
-        logger.warning(
-            "Reranker packages not available, skipping rerank: %s", exc
-        )
-        return None
-
-    try:
-        logger.info("Loading reranker model: BAAI/bge-reranker-v2-m3")
-        cross_encoder = HuggingFaceCrossEncoder(
-            model_name="BAAI/bge-reranker-v2-m3"
-        )
-        reranker = CrossEncoderReranker(model=cross_encoder, top_n=5)
-        logger.info("Reranker model loaded successfully.")
-        return reranker
-    except Exception as exc:
-        logger.warning("Failed to load reranker model: %s", exc)
-        return None
-
-
-# یک نمونه سراسری؛ اولین بار در اولین درخواست ساخته می‌شود
-_RERANKER = None
-_RERANKER_INITIALIZED = False
-
-
-def _ensure_reranker():
-    global _RERANKER, _RERANKER_INITIALIZED
-    if not _RERANKER_INITIALIZED:
-        _RERANKER = _get_reranker()
-        _RERANKER_INITIALIZED = True
-    return _RERANKER
-
-
-def _rerank_documents(question: str, docs: List[Any], logger) -> List[Any]:
-    """
-    Rerank کردن اسناد بر اساس ارتباط با question.
-    در صورت خطا یا نبود مدل، لیست اصلی برگردانده می‌شود.
-    """
-    reranker = _ensure_reranker()
-    if reranker is None or not docs:
-        return docs
-    try:
-        reranked = reranker.compress_documents(docs, question)
-        logger.info(
-            "Rerank: %d docs -> %d docs", len(docs), len(reranked)
-        )
-        return reranked
-    except Exception as exc:
-        logger.warning("Rerank failed, falling back to original order: %s", exc)
-        return docs
-
-
 def generate_rag_response(
     question: str,
     app_id: str,
@@ -211,8 +150,12 @@ def generate_rag_response(
         )
         raw_docs.append(doc)
 
-    # ۳. rerank و کاهش تعداد
-    reranked_docs = _rerank_documents(question, raw_docs, logger)
+    # ۳. rerank با سرویس مستقل (fallback داخلی دارد)
+    reranked_docs = rerank_documents(
+        question=question,
+        docs=raw_docs,
+        logger_override=logger,
+    )
 
     # اگر reranker در دسترس نبود یا خطا داد، برای جلوگیری از ارسال ۱۵ سند
     # به LLM، به final_k کاهش می‌دهیم.
