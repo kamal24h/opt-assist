@@ -1,24 +1,51 @@
-# ---------- Single-stage (بهینه‌شده) ----------
-FROM python:3.11-slim
+# syntax=docker/dockerfile:1.7
+# ---------- Stage 1: Builder ----------
+FROM python:3.11-slim AS builder
 
-# ---------- Environment ----------
+# تنظیمات پایتون و pip — فقط mirror Tsinghua
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DEFAULT_TIMEOUT=120 \
     PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
     PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
 
 WORKDIR /app
 
-# ---------- System dependencies (runtime only) ----------
-# libpq5        : برای psycopg (binary) در runtime
-# libmagic1     : برای unstructured (تشخیص نوع فایل)
-# poppler-utils : برای pypdf در برخی موارد
-# curl          : برای healthcheck
-# (build-essential/gcc/g++/python3-dev/libpq-dev حذف شدند چون psycopg[binary] استفاده می‌کنید)
+# وابستگی‌های سیستمی برای build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    g++ \
+    python3-dev \
+    libpq-dev \
+    libmagic1 \
+    poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# ۱. فقط requirements.txt را کپی کن
+COPY requirements.txt .
+
+# ۲. نصب نیازمندی‌ها فقط از mirror Tsinghua (بدون fallback به PyPI)
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip && \
+    pip install \
+        --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+        --trusted-host pypi.tuna.tsinghua.edu.cn \
+        -r requirements.txt
+
+# ۳. کپی کد پروژه
+COPY . .
+
+# ---------- Stage 2: Runtime ----------
+FROM python:3.11-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app
+
+WORKDIR /app
+
+# وابستگی‌های سیستمی runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     libmagic1 \
@@ -26,38 +53,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# ---------- Python dependencies ----------
-# 1) ابتدا torch نسخه CPU-only را نصب می‌کنیم تا از دانلود پشته CUDA (800MB+) جلوگیری شود.
-RUN pip install --no-cache-dir \
-    torch \
-    --index-url https://download.pytorch.org/whl/cpu
+# کپی بسته‌های نصب‌شده از builder
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
 
-# 2) سپس بقیه نیازمندی‌ها
-#    - pip upgrade لازم نیست، python:3.11-slim نسخه به‌روز pip را دارد.
-#    - cache mount باعث می‌شود .whlهای دانلودشده بین بیلدها حفظ شوند.
-COPY requirements.txt .
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir -r requirements.txt
-
-# ---------- Application code ----------
-# (.dockerignore باید .git, .venv, data/, __pycache__, *.pyc و ... را حذف کند)
+# کپی کد
 COPY . .
 
-# ---------- Runtime dirs & non-root user ----------
-RUN mkdir -p /app/temp_uploads /app/data && \
-    useradd -m -u 1000 appuser && \
-    chown -R appuser:appuser /app
+# پوشه‌های temp و data
+RUN mkdir -p /app/temp_uploads /app/data
 
+# کاربر غیر root
+RUN useradd -m -u 1000 appuser && \
+    chown -R appuser:appuser /app
 USER appuser
 
-# ---------- Port & Healthcheck ----------
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# ---------- Run ----------
-# زمان‌بر بودن پردازش LLM → timeout 300
 CMD ["gunicorn", "main:app", \
      "--worker-class", "uvicorn.workers.UvicornWorker", \
      "--workers", "2", \

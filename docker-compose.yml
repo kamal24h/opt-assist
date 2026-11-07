@@ -10,17 +10,22 @@ services:
       - "11434:11434"
     environment:
       - OLLAMA_HOST=0.0.0.0
-      - OLLAMA_NUM_PARALLEL=2
-      - OLLAMA_MAX_LOADED_MODELS=2      
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_MAX_LOADED_MODELS=1
+      - NVIDIA_VISIBLE_DEVICES=all
+      - OLLAMA_KEEP_ALIVE=-1
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility      
+    gpus: all
     networks:
-      - assistant_network
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+      - assistant_network    
+    
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
 
   # ---------- Vector DB (Qdrant) ----------
   qdrant:
@@ -57,8 +62,10 @@ services:
       - QDRANT_API_KEY=${QDRANT_API_KEY}
       - COLLECTION_NAME=${COLLECTION_NAME:-assistant_knowledge1}
       - OLLAMA_URL=http://ollama:11434
-      - LLM_MODEL=${LLM_MODEL:-qwen3:8b}
+      - LLM_MODEL=${LLM_MODEL:-qwen3.5:9b}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-qllama/bge-m3:q4_k_m}
+      - LLM_NUM_CTX=${LLM_NUM_CTX:-8192}
+      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.3}
       - CHUNK_SIZE=${CHUNK_SIZE:-800}
       - CHUNK_OVERLAP=${CHUNK_OVERLAP:-120}
       - EMBED_BATCH_SIZE=${EMBED_BATCH_SIZE:-32}
