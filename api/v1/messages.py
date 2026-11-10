@@ -11,6 +11,7 @@ from config import settings
 from database import Message, get_db
 
 from services.conversation_service import ConversationService
+from services.linkify import linkify_html
 from services.rag_service import generate_rag_response
 from schemas.conversation import (
     MessageOut,
@@ -24,6 +25,17 @@ router = APIRouter(
 )
 
 
+def _linkify_message_dict(item: dict) -> dict:
+    """Apply linkify_html to `answer` in a message dict (for response_model)."""
+    if not isinstance(item, dict):
+        return item
+    answer = item.get("answer")
+    if isinstance(answer, str) and answer:
+        item = dict(item)
+        item["answer"] = linkify_html(answer)
+    return item
+
+
 @router.get("", response_model=List[MessageOut])
 def list_messages(
     conv_id: uuid.UUID,
@@ -31,12 +43,31 @@ def list_messages(
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
-    return ConversationService.get_messages(
+    rows = ConversationService.get_messages(
         db,
         conversation_id=conv_id,
         limit=limit,
         offset=offset,
     )
+    # Linkify each message's answer before FastAPI serializes it.
+    result = []
+    for row in rows:
+        # `Message` is an ORM object; build dict with the fields MessageOut needs
+        item = {
+            "id": row.id,
+            "conversation_id": row.conversation_id,
+            "query": row.query,
+            "answer": linkify_html(row.answer) if row.answer else row.answer,
+            "duration": row.duration,
+            "error": row.error,
+            "meta_info": row.meta_info,
+            "liked": row.liked,
+            "created_at": row.created_at,
+            "role": row.role,
+            "content": row.content,
+        }
+        result.append(item)
+    return result
 
 
 @router.post("", response_model=MessageOut)
@@ -79,7 +110,7 @@ def send_message(
                 status_code=400,
                 detail="این مکالمه appId معتبری ندارد.",
             )
-        
+
         answer, sources, form_id = generate_rag_response(
             question=req.prompt,
             app_ids=app_ids,
@@ -100,6 +131,9 @@ def send_message(
                 "searchedAppIds": app_ids,      # ← برای ردیابی
             },
         )
+        # Linkify the answer for the response (the DB keeps the raw answer).
+        if completed and completed.answer:
+            completed.answer = linkify_html(completed.answer)
         return completed
 
     except Exception as e:
@@ -135,4 +169,7 @@ def like_message(
     if not msg:
         raise HTTPException(status_code=404, detail="پیام یافت نشد.")
     updated = ConversationService.set_message_like(db, message_id, req.liked)
-    return updated   
+    # Linkify the answer for the response (the DB keeps the raw answer).
+    if updated and updated.answer:
+        updated.answer = linkify_html(updated.answer)
+    return updated

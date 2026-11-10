@@ -28,3 +28,4 @@ psycopg[binary]
 langchain_classic
 langchain-huggingface
 sentence-transformers
+linkify-it-py>=2.0,<3.0
