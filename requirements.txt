@@ -1,31 +1,40 @@
-fastapi
-uvicorn[standard]
-gunicorn
+# --- Core web ---
+fastapi==0.162.4
+uvicorn[standard]==0.54.0
+gunicorn==27.0.0
 
-langchain-core
-langchain-community
-langchain-ollama
-langchain-qdrant
-langchain-text-splitters
+# --- LangChain stack ---
+langchain-core==1.7.7
+langchain-community==0.4.2
+langchain-ollama==1.1.0
+langchain-qdrant==1.1.0
+langchain-text-splitters==1.1.3
+langchain-openai==0.3.0
+openai>=1.50.0
 
-qdrant-client>=1.7,<2
+qdrant-client==1.20.0
 
-pydantic
-pydantic-settings>=2.0.0
-python-multipart
+# --- Pydantic / validation ---
+pydantic==2.14.3
+pydantic-settings==2.16.2
+python-multipart==0.0.33
 
-unstructured
-docx2txt
-pypdf
+# --- Document parsing ---
+unstructured==0.27.37
+docx2txt==0.9
+pypdf==7.0.1
 
-redis
-pika
+# --- Infra ---
+redis==8.1.0
+pika==1.4.4
 
-sqlalchemy
-psycopg[binary]
+sqlalchemy==2.1.8
+psycopg[binary]==3.3.8
 
-# for Reranking
-langchain_classic
-langchain-huggingface
-sentence-transformers
-linkify-it-py>=2.0,<3.0
+# --- Embedding / reranking ---
+langchain_classic==1.0.8
+langchain-huggingface==1.2.3
+sentence-transformers==6.2.0
+
+# --- Misc ---
+linkify-it-py==2.2.0

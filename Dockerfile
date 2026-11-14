@@ -14,20 +14,20 @@ WORKDIR /app
 # وابستگی‌های سیستمی برای build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    gcc \
-    g++ \
-    python3-dev \
-    libpq-dev \
-    libmagic1 \
-    poppler-utils \
+    # gcc \
+    # g++ \
+    # python3-dev \
+    # libpq-dev \
+    # libmagic1 \
+    # poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # ۱. فقط requirements.txt را کپی کن
 COPY requirements.txt .
 
 # ۲. نصب نیازمندی‌ها فقط از mirror Tsinghua (بدون fallback به PyPI)
+# نصب نیازمندی‌ها — بدون upgrade pip، با cache mount
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --upgrade pip && \
     pip install \
         --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
         --trusted-host pypi.tuna.tsinghua.edu.cn \
