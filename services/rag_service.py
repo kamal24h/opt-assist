@@ -11,6 +11,7 @@ from qdrant_client.http.models import Filter, FieldCondition, MatchValue, MatchA
 
 from config import settings
 from services.reranker_service import rerank_documents  # ← Reranker از سرویس مستقل
+from services.llm_factory import get_llm
 
 import hashlib
 import logging
@@ -149,13 +150,19 @@ def generate_rag_response(
     from services.intent_classifier import is_small_talk
     if is_small_talk(question):
         logger.info("Skipping RAG for small talk: %r", question[:50])
-        llm = ChatOllama(
-            model=settings.llm_model,
-            base_url=settings.ollama_url,
+
+        llm = get_llm(
             temperature=0.2,
             reasoning=False,
-            num_ctx=settings.llm_num_ctx
-        )
+            purpose="small_talk"
+        )        
+        # llm = ChatOllama(
+        #     model=settings.llm_model,
+        #     base_url=settings.ollama_url,
+        #     temperature=0.2,
+        #     reasoning=False,
+        #     num_ctx=settings.llm_num_ctx
+        # )
         # یک prompt ساده برای پاسخ محاوره‌ای (بدون context اسناد)
         prompt = f"به فارسی طبیعی و کوتاه پاسخ بده. پیام کاربر: {question}"
         answer = llm.invoke(prompt).content
@@ -298,16 +305,25 @@ def generate_rag_response(
         ("human", "{question}"),
     ])
 
-    llm = ChatOllama(
-        model=settings.llm_model,
-        base_url=settings.ollama_url,
+    llm = get_llm(
         temperature=settings.llm_temperature,
         reasoning=False,
-        #think=False,
         num_ctx=settings.llm_num_ctx,
-        repeat_penalty=1.1,      # برای جلوگیری از افتادن در حلقه تکرار عبارات
-        num_predict=1024,        # حداکثر توکن خروجی برای پاسخ
+        num_predict=1024,
+        repeat_penalty=1.1,
+        purpose="chat",
     )
+
+    # llm = ChatOllama(
+    #     model=settings.llm_model,
+    #     base_url=settings.ollama_url,
+    #     temperature=settings.llm_temperature,
+    #     reasoning=False,
+    #     #think=False,
+    #     num_ctx=settings.llm_num_ctx,
+    #     repeat_penalty=1.1,      # برای جلوگیری از افتادن در حلقه تکرار عبارات
+    #     num_predict=1024,        # حداکثر توکن خروجی برای پاسخ
+    # )
     chain = prompt_template | llm | StrOutputParser()
     answer = chain.invoke({
         "context": context_text,
